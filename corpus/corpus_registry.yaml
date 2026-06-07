@@ -1,0 +1,162 @@
+documents:
+
+  # ── SAFESHIFT DOMAIN ─ Workplace Safety ──────────────────────────────────────
+
+  - doc_id: SS01
+    domain: safeshift
+    title: "Code of Practice — Managing the Work Environment and Facilities"
+    short_title: "Managing Work Environment COP"
+    source: "https://www.worksafe.qld.gov.au/__data/assets/pdf_file/0020/58171/managing-work-environment-facilities-cop-2021.pdf"
+    filename: SS01_worksafe_managing_environment.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "What are the requirements for rest breaks for shift workers?"
+      - "What temperature must a workplace be maintained at?"
+
+  - doc_id: SS02
+    domain: safeshift
+    title: "Code of Practice — Hazardous Manual Tasks"
+    short_title: "Hazardous Manual Tasks COP"
+    source: "https://www.worksafe.qld.gov.au/__data/assets/pdf_file/0004/58163/hazardous-manual-tasks-cop-2021.pdf"
+    filename: SS02_worksafe_hazardous_manual_tasks.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 2
+    demo_queries:
+      - "How do I assess the risk of a manual handling task?"
+      - "What are my obligations for workers with musculoskeletal injuries?"
+
+  - doc_id: SS03
+    domain: safeshift
+    title: "Work Health and Safety Act 2011 — Key Duties Summary"
+    short_title: "WHS Act Key Duties"
+    source: "https://www.worksafe.qld.gov.au/__data/assets/pdf_file/0006/82088/whs-act-2011.pdf"
+    filename: SS03_whs_act_key_duties.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "What is a person conducting a business or undertaking (PCBU) responsible for?"
+      - "What are the penalties for breaching the WHS Act?"
+
+  # ── FAIRDESK DOMAIN ─ Workplace Relations ────────────────────────────────────
+
+  - doc_id: FD01
+    domain: fairdesk
+    title: "National Employment Standards — Employee Guide"
+    short_title: "NES Employee Guide"
+    source: "https://www.fairwork.gov.au/sites/default/files/migration/724/national-employment-standards.pdf"
+    filename: FD01_fairwork_nes_guide.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "How much annual leave is an employee entitled to?"
+      - "What notice is required when terminating an employee?"
+
+  - doc_id: FD02
+    domain: fairdesk
+    title: "Casual Employment — Employer Guide"
+    short_title: "Casual Employment Guide"
+    source: "https://www.fairwork.gov.au/sites/default/files/2022-09/casual-employment-information-statement.pdf"
+    filename: FD02_fairwork_casual_employment.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 2
+    demo_queries:
+      - "Can I change a casual employee to part-time without their consent?"
+      - "What is the casual conversion right?"
+
+  - doc_id: FD03
+    domain: fairdesk
+    title: "Flexible Working Arrangements — Guide"
+    short_title: "Flexible Working Guide"
+    source: "https://www.fairwork.gov.au/leave/flexible-working-arrangements"
+    filename: FD03_fairwork_flexible_working.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "Who is entitled to request flexible working arrangements?"
+      - "Can an employer refuse a flexible working request?"
+
+  # ── HEALTHNAV DOMAIN ─ Occupational Health ───────────────────────────────────
+
+  - doc_id: HN01
+    domain: healthnav
+    title: "Work-Related Mental Health — Employer Guide (Safe Work Australia)"
+    short_title: "Mental Health Employer Guide"
+    source: "https://www.safeworkaustralia.gov.au/system/files/documents/1702/work-related_mental_health_conditions_0.pdf"
+    filename: HN01_safework_mental_health.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "What are my obligations when a worker discloses a mental health condition?"
+      - "How do I support a worker returning from mental health leave?"
+
+  - doc_id: HN02
+    domain: healthnav
+    title: "Fatigue Management in the Workplace (Safe Work Australia)"
+    short_title: "Fatigue Management Guide"
+    source: "https://www.safeworkaustralia.gov.au/system/files/documents/1702/fatigue_guide.pdf"
+    filename: HN02_safework_fatigue.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 2
+    demo_queries:
+      - "What are the signs of fatigue in FIFO workers?"
+      - "What controls should I implement for fatigue risk?"
+
+  - doc_id: HN03
+    domain: healthnav
+    title: "Workers Compensation — Guide for Employers (WorkCover QLD)"
+    short_title: "Workers Compensation Employer Guide"
+    source: "https://www.worksafe.qld.gov.au/__data/assets/pdf_file/0005/82087/workers-compensation-guide-employers.pdf"
+    filename: HN03_workcover_employers_guide.pdf
+    chunk_strategy:
+      method: sliding_window
+      chunk_size: 400
+      overlap: 50
+      preserve_sections: true
+    priority: 1
+    demo_queries:
+      - "What must I do when a worker is injured on site?"
+      - "What are my obligations during a workers compensation claim?"
+
+# ── COLLECTION METADATA ───────────────────────────────────────────────────────
+
+metadata:
+  collection_name: workershield
+  embedding_model: nomic-embed-text
+  vector_size: 768
+  distance_metric: cosine
+  created: "June 2026"
+  version: "1.0"
+  notes: "Portfolio build — Australian open data sources only. 9 docs, 3 domains."
