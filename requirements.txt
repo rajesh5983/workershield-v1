@@ -1,0 +1,10 @@
+anthropic
+langgraph
+langchain
+langchain-text-splitters
+qdrant-client
+pypdf
+gradio
+pyyaml
+tabulate
+requests
