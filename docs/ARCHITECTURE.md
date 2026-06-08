@@ -12,56 +12,38 @@ The primary audience for WorkerShield is HR managers, WHS officers, and operatio
 
 ## 2. High-Level Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  INPUT LAYER                                                    │
-│                                                                 │
-│                    User Query (Gradio UI)                       │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  AGENT LAYER  ·  LangGraph StateGraph                           │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │  Router Agent  ·  Claude Haiku                          │   │
-│   │  Classifies query → detected_domains + cross_domain     │   │
-│   └────────────────────────┬────────────────────────────────┘   │
-│                            │                                    │
-│            conditional edges on detected_domains                │
-│                            │                                    │
-│          ┌─────────────────┼──────────────────┐                 │
-│          ▼                 ▼                  ▼                 │
-│   ┌────────────┐   ┌──────────────┐   ┌──────────────┐         │
-│   │ SafeShift  │   │  FairDesk    │   │  HealthNav   │         │
-│   │ Retrieval  │   │  Retrieval   │   │  Retrieval   │         │
-│   │ (Qdrant)   │   │  (Qdrant)    │   │  (Qdrant)    │         │
-│   └─────┬──────┘   └──────┬───────┘   └──────┬───────┘         │
-│         └─────────────────┼──────────────────┘                 │
-│                           │ chunks with metadata                │
-│                           ▼                                     │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │  Synthesis Agent  ·  Claude Sonnet                      │   │
-│   │  Assembles context → generates cited answer             │   │
-│   └────────────────────────┬────────────────────────────────┘   │
-│                            │                                    │
-└────────────────────────────┼────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  OUTPUT LAYER                                                   │
-│                                                                 │
-│   Gradio UI  ·  answer + citations + domain indicators          │
-│   JSONL Run Log  ·  observability                               │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+%% WorkerShield — System Architecture
+flowchart LR
+    User(["User"])
+    UI["Gradio UI\nlocalhost:7860"]
+    Router["router_node\nClaude Haiku"]
+    SS["safeshift_node"]
+    FD["fairdesk_node"]
+    HN["healthnav_node"]
+    Synth["synthesis_node\nClaude Sonnet"]
+    Out["output_node\n+ JSONL log"]
+    Qdrant[("Qdrant :6333\nworkershield\n768-dim cosine")]
+    Ollama["Ollama :11434\nnomic-embed-text"]
 
-┌─────────────────────────────────────────────────────────────────┐
-│  DATA LAYER  (serves all retrieval nodes)                       │
-│                                                                 │
-│   Qdrant Collection: workershield                               │
-│   3 domain partitions via payload metadata filtering            │
-│   768-dim vectors  ·  nomic-embed-text  ·  cosine distance      │
-└─────────────────────────────────────────────────────────────────┘
+    User -->|query| UI
+    UI --> Router
+    Router -->|safeshift| SS
+    Router -->|fairdesk| FD
+    Router -->|healthnav| HN
+    SS --> Synth
+    FD --> Synth
+    HN --> Synth
+    Synth --> Out
+    Out -->|"answer + citations"| UI
+    UI -->|cited answer| User
+
+    Qdrant -.->|vector search| SS
+    Qdrant -.->|vector search| FD
+    Qdrant -.->|vector search| HN
+    Ollama -.->|embed query| SS
+    Ollama -.->|embed query| FD
+    Ollama -.->|embed query| HN
 ```
 
 ---
@@ -81,6 +63,30 @@ All inter-node data flows through a single immutable `WorkerShieldState` TypedDi
 | `synthesis_input` | `str` | The assembled context string — all retrieved chunks concatenated with domain labels — passed to the Synthesis Agent |
 | `final_answer` | `str` | Sonnet's synthesised, citation-grounded answer ready for display |
 | `citations` | `list[dict]` | Structured citation list; each entry carries `doc_title`, `section`, and `domain` for rendering in the UI |
+| `confidence` | `str` | Confidence level for the synthesised answer: `high`, `medium`, or `low` |
+
+### State Machine Graph
+
+```mermaid
+%% WorkerShield — LangGraph State Machine
+flowchart TD
+    START([START])
+    router["router_node\nHaiku classifier"]
+    ss["safeshift_node\nQdrant retriever"]
+    fd["fairdesk_node\nQdrant retriever"]
+    hn["healthnav_node\nQdrant retriever"]
+    synth["synthesis_node\nClaude Sonnet"]
+    out["output_node"]
+    END([END])
+
+    START --> router
+    router -->|"safeshift in detected_domains\nor cross_domain=True"| ss
+    router -->|"fairdesk in detected_domains\nor cross_domain=True"| fd
+    router -->|"healthnav in detected_domains\nor cross_domain=True"| hn
+    ss & fd & hn --> synth
+    synth --> out
+    out --> END
+```
 
 ---
 
@@ -157,7 +163,61 @@ The formatted answer and structured citation list are returned to the Gradio UI.
 
 ---
 
-## 8. File Structure
+## 8. Ingest Pipeline
+
+The ingest pipeline runs once to populate Qdrant from the raw PDF corpus. It is driven entirely by `corpus/corpus_registry.yaml` — no code changes are needed to add a new document.
+
+```mermaid
+%% WorkerShield — Ingest Pipeline
+flowchart LR
+    Registry["corpus_registry.yaml\n10 documents\nmetadata + chunk strategy"]
+    PDF["PDF files\ncorpus/raw/"]
+    pypdf["pypdf\npage-by-page extraction"]
+    chunker["chunk_strategy.py\nsection_header\nclause_boundary\nrecursive"]
+    embed["Ollama :11434\nnomic-embed-text\n768-dim vectors"]
+    qdrant[("Qdrant :6333\ncollection: workershield")]
+
+    Registry -->|"chunk strategy\nper doc_id"| chunker
+    PDF --> pypdf
+    pypdf -->|"full text"| chunker
+    chunker -->|"chunk dicts\n+ metadata"| embed
+    embed -->|"PointStruct\nvector + payload"| qdrant
+```
+
+---
+
+## 9. RAGAS Evaluation Pipeline
+
+Offline evaluation uses RAGAS with a local Ollama Mistral judge and `nomic-embed-text` embeddings — no external evaluation API dependency.
+
+```mermaid
+%% WorkerShield — RAGAS Evaluation Pipeline
+flowchart LR
+    Queries["Test Queries\ntests/ragas_eval.py"]
+    Graph["WorkerShield Graph\nbuild_graph().compile()"]
+    Answer["answer"]
+    Contexts["retrieved_contexts"]
+    Ground["ground_truth"]
+    Dataset["RAGAS Dataset"]
+    Eval["RAGAS evaluate()"]
+    Mistral["Mistral\njudge LLM\nOllama :11434"]
+    Nomic["nomic-embed-text\njudge embeddings\nOllama :11434"]
+    Scores["Scores\nFaithfulness\nAnswer Relevancy\nContext Precision\nContext Recall"]
+
+    Queries --> Graph
+    Graph --> Answer
+    Graph --> Contexts
+    Queries -->|expected| Ground
+    Answer & Contexts & Ground --> Dataset
+    Dataset --> Eval
+    Mistral -.->|LLM judge| Eval
+    Nomic -.->|embeddings| Eval
+    Eval --> Scores
+```
+
+---
+
+## 10. File Structure
 
 ```
 workershield-v1/

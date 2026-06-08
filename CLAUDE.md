@@ -64,8 +64,25 @@ citations: list[dict]          # [{doc_title, section, domain}, ...]
 
 ## Graph Flow
 
-```
-START → router_node → retrieval_node → synthesis_node → output_node → END
+```mermaid
+%% WorkerShield — LangGraph State Machine
+flowchart TD
+    START([START])
+    router["router_node\nHaiku classifier"]
+    ss["safeshift_node\nQdrant retriever"]
+    fd["fairdesk_node\nQdrant retriever"]
+    hn["healthnav_node\nQdrant retriever"]
+    synth["synthesis_node\nClaude Sonnet"]
+    out["output_node"]
+    END([END])
+
+    START --> router
+    router -->|"safeshift in detected_domains\nor cross_domain=True"| ss
+    router -->|"fairdesk in detected_domains\nor cross_domain=True"| fd
+    router -->|"healthnav in detected_domains\nor cross_domain=True"| hn
+    ss & fd & hn --> synth
+    synth --> out
+    out --> END
 ```
 
 Conditional edge after `router_node`:
