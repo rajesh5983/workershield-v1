@@ -22,12 +22,15 @@ from typing import Any
 
 import requests
 import yaml
+from dotenv import load_dotenv
 from pypdf import PdfReader
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from tqdm import tqdm
 
 from ingest.chunk_strategy import get_chunker
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Configuration
