@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import anthropic
@@ -31,7 +32,8 @@ Always cite the specific document and section for every claim you make.
 Never answer from general knowledge — only from provided context.
 For cross-domain queries, include a paragraph explicitly connecting the obligations across domains.
 
-Respond with ONLY a valid JSON object — no markdown fences, no prose outside the JSON — in exactly this shape:
+Respond with ONLY a valid JSON object — no markdown fences, no prose outside the JSON — in exactly this shape.
+Return a single flat JSON object. Do not nest JSON inside strings. Do not escape quotes inside field values. Use \n for newlines in the answer field.
 
 {
   "answer": "<full markdown answer with inline citations like [HN01] or [FD03]>",
@@ -128,6 +130,38 @@ def _extract_citations(answer_text: str, all_chunks: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# JSON parser
+# ---------------------------------------------------------------------------
+
+def _parse_synthesis_response(raw: str) -> dict:
+    """Robustly parse Sonnet's JSON response, handling markdown fences and
+    escaped-quote issues that break a straight json.loads()."""
+    # Strip markdown fences
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        raw = "\n".join(lines[1:])
+        raw = raw.rsplit("```", 1)[0].strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract answer field directly with regex
+    answer_match = re.search(
+        r'"answer"\s*:\s*"(.*?)(?<!\\)"\s*,\s*"citations"', raw, re.DOTALL
+    )
+    if answer_match:
+        answer = answer_match.group(1).replace("\\n", "\n").replace('\\"', '"')
+        return {"answer": answer, "citations": [], "confidence": "medium"}
+
+    # Final fallback: return raw text as answer
+    return {"answer": raw, "citations": [], "confidence": "low"}
+
+
+# ---------------------------------------------------------------------------
 # Public node
 # ---------------------------------------------------------------------------
 
@@ -161,22 +195,10 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": synthesis_input}],
         )
-        raw = message.content[0].text
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1]   # remove opening ``` or ```json line
-            raw = raw.rsplit("```", 1)[0]  # remove closing ```
-        raw = raw.strip()
-
-        parsed: dict = json.loads(raw)
-
-    except json.JSONDecodeError as exc:
-        logger.error("[synthesis] JSON parse failed: %s\nraw=%r", exc, raw[:300])
-        parsed = {
-            "answer":     raw,
-            "citations":  [],
-            "confidence": "low",
-        }
+        raw    = message.content[0].text
+        parsed = _parse_synthesis_response(raw)
+        if parsed.get("confidence") == "low" and parsed.get("answer") == raw.strip():
+            logger.warning("[synthesis] JSON parse fell back to raw text, raw=%r", raw[:200])
     except Exception as exc:
         logger.error("[synthesis] API call failed: %s", exc)
         parsed = {
