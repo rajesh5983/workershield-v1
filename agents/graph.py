@@ -16,7 +16,6 @@ import operator
 import os
 from typing import Annotated, Any
 
-import anthropic
 import requests
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
@@ -26,6 +25,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from typing_extensions import TypedDict
 
 from agents.router import router_node as _router_node
+from agents.synthesis import synthesis_node as _synthesis_node
 
 load_dotenv()
 
@@ -40,27 +40,7 @@ QDRANT_HOST = os.environ.get("QDRANT_HOST", "http://localhost:6333")
 COLLECTION  = "workershield"
 EMBED_MODEL = "nomic-embed-text"
 MAX_CHARS   = 6_000
-TOP_K       = 5
-
-_SYNTHESIS_SYSTEM = """You are WorkerShield, an expert Australian workplace compliance assistant.
-
-You will be given retrieved document chunks from three compliance domains:
-- SafeShift: WHS legislation and workplace safety
-- FairDesk: Fair Work Act and employment conditions
-- HealthNav: Occupational health and workers compensation
-
-Your task:
-1. Answer the user's query accurately using ONLY the provided chunks.
-2. Cite every factual claim using inline citations in the format [DOC_ID].
-3. If chunks from multiple domains are relevant, integrate them into a single coherent answer.
-4. End with a CITATIONS section listing each source used.
-
-Citation format in answer body: [FD01], [SS03a], [HN01] etc.
-
-CITATIONS section format:
-[DOC_ID] — Title — Section (if available)
-
-Be direct and practical. Australian workplace law applies."""
+TOP_K       = 3
 
 # ---------------------------------------------------------------------------
 # State
@@ -171,73 +151,8 @@ _DOMAIN_NODES = {
 
 
 def synthesis_node(state: WorkerShieldState) -> dict[str, Any]:
-    """Assemble context and call Claude Sonnet for a cited answer."""
-    all_chunks: list[dict] = (
-        state.get("safeshift_chunks", [])
-        + state.get("fairdesk_chunks", [])
-        + state.get("healthnav_chunks", [])
-    )
-
-    # Build context block
-    context_lines = []
-    for c in all_chunks:
-        section_label = f" § {c['section']}" if c["section"] else ""
-        context_lines.append(
-            f"[{c['doc_id']}] {c['title']}{section_label}\n"
-            f"(domain: {c['domain']}, score: {c['score']})\n"
-            f"{c['text']}\n"
-        )
-    synthesis_input = (
-        f"QUERY: {state['query']}\n\n"
-        f"RETRIEVED CHUNKS:\n\n"
-        + "\n---\n".join(context_lines)
-    )
-
-    logger.info("[synthesis] context length=%d chars, chunks=%d",
-                len(synthesis_input), len(all_chunks))
-
-    try:
-        client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            system=_SYNTHESIS_SYSTEM,
-            messages=[{"role": "user", "content": synthesis_input}],
-        )
-        final_answer = message.content[0].text.strip()
-    except Exception as exc:
-        logger.error("[synthesis] API call failed: %s", exc)
-        final_answer = (
-            f"[Synthesis unavailable — API error: {exc}]\n\n"
-            f"Raw retrieved chunks:\n\n"
-            + "\n\n".join(f"[{c['doc_id']}] {c['text'][:300]}" for c in all_chunks)
-        )
-
-    # Extract citations from chunks that were actually referenced
-    citations = [
-        {
-            "doc_id":    c["doc_id"],
-            "doc_title": c["title"],
-            "section":   c["section"],
-            "domain":    c["domain"],
-            "excerpt":   c["text"][:120],
-        }
-        for c in all_chunks
-        if c["doc_id"] and c["doc_id"] in final_answer
-    ]
-    # Deduplicate by doc_id while preserving order
-    seen: set[str] = set()
-    unique_citations: list[dict] = []
-    for cit in citations:
-        if cit["doc_id"] not in seen:
-            unique_citations.append(cit)
-            seen.add(cit["doc_id"])
-
-    return {
-        "synthesis_input": synthesis_input,
-        "final_answer":    final_answer,
-        "citations":       unique_citations,
-    }
+    """Delegate to agents.synthesis which owns the full synthesis logic."""
+    return _synthesis_node(state)
 
 
 def output_node(state: WorkerShieldState) -> dict[str, Any]:
