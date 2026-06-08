@@ -1,0 +1,100 @@
+documents:
+  - id: FD01
+    domain: fairdesk
+    title: Introduction to the National Employment Standards
+    filename: FD01_fairwork_nes_guide.pdf
+    source: Fair Work Ombudsman
+    license: CC BY
+    pages: 2
+    chunk_strategy: clause_boundary
+    notes: 13 NES entitlements, numbered conditional logic
+
+  - id: FD02
+    domain: fairdesk
+    title: Casual Employment Information Statement
+    filename: FD02_fairwork_casual_employment.pdf
+    source: Fair Work Ombudsman
+    license: CC BY
+    pages: 3
+    chunk_strategy: recursive
+    notes: Short fact sheet, flowing prose
+
+  - id: FD03
+    domain: fairdesk
+    title: Flexible Working Arrangements Best Practice Guide
+    filename: FD03_fairwork_flexible_working.pdf
+    source: Fair Work Ombudsman
+    license: CC BY
+    pages: 14
+    chunk_strategy: table_aware
+    notes: Contains obligation tables and conditions
+
+  - id: HN01
+    domain: healthnav
+    title: Work-Related Psychological Health and Safety
+    filename: HN01_safework_mental_health.pdf
+    source: Safe Work Australia
+    license: CC BY
+    pages: 43
+    chunk_strategy: section_header
+    notes: Section-based mental health guidance, systematic approach
+
+  - id: HN02
+    domain: healthnav
+    title: Fatigue Fact Sheet for Workers
+    filename: HN02_safework_fatigue.pdf
+    source: Safe Work Australia
+    license: CC BY
+    pages: 3
+    chunk_strategy: recursive
+    notes: Short fact sheet, flowing prose narrative
+
+  - id: HN03
+    domain: healthnav
+    title: Entitlements Under Workers Compensation
+    filename: HN03_workcover_employers_guide.pdf
+    source: Safe Work Australia
+    license: CC BY
+    pages: 12
+    chunk_strategy: section_header
+    notes: Workers compensation entitlements, structured sections
+
+  - id: SS01
+    domain: safeshift
+    title: Managing the Work Environment and Facilities Code of Practice 2021
+    filename: SS01_worksafe_managing_environment.pdf
+    source: WorkSafe QLD
+    license: CC BY
+    pages: 42
+    chunk_strategy: section_header
+    notes: Code of Practice, numbered section headings
+
+  - id: SS02
+    domain: safeshift
+    title: Hazardous Manual Tasks Code of Practice 2018
+    filename: SS02_worksafe_hazardous_manual_tasks.pdf
+    source: WorkSafe QLD
+    license: CC BY
+    pages: 71
+    chunk_strategy: section_header
+    notes: Code of Practice, numbered section headings
+
+  - id: SS03a
+    domain: safeshift
+    title: Queensland Work Health and Safety Act 2011
+    filename: SS03_whs_act_key_duties.pdf
+    source: Queensland Legislation
+    license: CC BY
+    pages: 308
+    chunk_strategy: clause_boundary
+    notes: Full legislation, numbered clauses, primary authority document
+
+  - id: SS03b
+    domain: safeshift
+    title: Guide to the Model Work Health and Safety Act
+    filename: SS03_whs_duties_guide.pdf
+    source: Safe Work Australia
+    license: CC BY
+    pages: 42
+    chunk_strategy: clause_boundary
+    notes: Duties summary guide, clause-style obligations, December 2019
