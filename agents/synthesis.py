@@ -154,9 +154,7 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
 
     # ── Sonnet call ─────────────────────────────────────────────────────────
     try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY at call time
+        api_client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env (loaded at module level)
         message    = api_client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1500,
