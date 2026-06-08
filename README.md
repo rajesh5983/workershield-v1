@@ -21,39 +21,38 @@ WorkerShield v1 is a portfolio project demonstrating end-to-end agentic RAG arch
 
 ## Architecture
 
-```
-                        ┌─────────────────────────────────────┐
-                        │            Gradio UI                │
-                        │          localhost:7860              │
-                        └──────────────┬──────────────────────┘
-                                       │ query
-                                       ▼
-                        ┌─────────────────────────────────────┐
-                        │         Router Agent                │
-                        │      Claude Haiku (Anthropic)       │
-                        │  → detected_domains, cross_domain   │
-                        └──────────────┬──────────────────────┘
-                                       │
-               ┌───────────────────────┼───────────────────────┐
-               │ safeshift             │ fairdesk              │ healthnav
-               ▼                       ▼                       ▼
-  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
-  │  SafeShift         │  │  FairDesk          │  │  HealthNav         │
-  │  Retriever         │  │  Retriever         │  │  Retriever         │
-  │  Qdrant (top-5)    │  │  Qdrant (top-5)    │  │  Qdrant (top-5)    │
-  └────────┬───────────┘  └────────┬───────────┘  └────────┬───────────┘
-           └──────────────────────┬─────────────────────────┘
-                                  │ synthesis_input (assembled context)
-                                  ▼
-                   ┌──────────────────────────────┐
-                   │      Synthesis Agent         │
-                   │   Claude Sonnet (Anthropic)  │
-                   │   → final_answer, citations  │
-                   └──────────────────────────────┘
-                                  │
-                                  ▼
-                          Cited Answer returned
-                          to Gradio UI
+```mermaid
+%% WorkerShield — System Architecture
+flowchart LR
+    User(["User"])
+    UI["Gradio UI\nlocalhost:7860"]
+    Router["router_node\nClaude Haiku"]
+    SS["safeshift_node"]
+    FD["fairdesk_node"]
+    HN["healthnav_node"]
+    Synth["synthesis_node\nClaude Sonnet"]
+    Out["output_node"]
+    Qdrant[("Qdrant\n:6333\nworkershield")]
+    Ollama["Ollama\nnomic-embed-text\n:11434"]
+
+    User -->|query| UI
+    UI --> Router
+    Router -->|safeshift| SS
+    Router -->|fairdesk| FD
+    Router -->|healthnav| HN
+    SS --> Synth
+    FD --> Synth
+    HN --> Synth
+    Synth --> Out
+    Out -->|"answer + citations"| UI
+    UI -->|cited answer| User
+
+    Qdrant -.-> SS
+    Qdrant -.-> FD
+    Qdrant -.-> HN
+    Ollama -.-> SS
+    Ollama -.-> FD
+    Ollama -.-> HN
 ```
 
 The full agent graph is implemented as a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through four nodes: `router_node → retrieval_node → synthesis_node → output_node`. A conditional edge after the router fires all three retrievers when `cross_domain = True`, or only the detected subset otherwise.
