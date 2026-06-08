@@ -6,8 +6,8 @@ documents:
     source: Fair Work Ombudsman
     license: CC BY
     pages: 2
-    chunk_strategy: clause_boundary
-    notes: 13 NES entitlements, numbered conditional logic
+    chunk_strategy: recursive
+    notes: Short 2-page fact sheet, flowing prose with bullet points — no clause hierarchy
 
   - id: FD02
     domain: fairdesk
@@ -26,8 +26,8 @@ documents:
     source: Fair Work Ombudsman
     license: CC BY
     pages: 14
-    chunk_strategy: table_aware
-    notes: Contains obligation tables and conditions
+    chunk_strategy: recursive
+    notes: Primarily prose narrative — no pipe/tab tables detected in PDF extraction
 
   - id: HN01
     domain: healthnav
