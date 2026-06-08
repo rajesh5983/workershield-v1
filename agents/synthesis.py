@@ -247,6 +247,7 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
         "synthesis_input": synthesis_input,
         "final_answer":    json.dumps(final_structured, ensure_ascii=False, indent=2),
         "citations":       merged_citations,
+        "confidence":      confidence,
     }
 
 

@@ -58,6 +58,7 @@ class WorkerShieldState(TypedDict):
     synthesis_input:   str
     final_answer:      str
     citations:         list[dict]  # {doc_id, doc_title, section, domain, excerpt}
+    confidence:        str         # "high", "medium", or "low"
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +159,10 @@ def synthesis_node(state: WorkerShieldState) -> dict[str, Any]:
 def output_node(state: WorkerShieldState) -> dict[str, Any]:
     """Format the final response — no-op in state terms; side-effect is the log."""
     logger.info(
-        "[output] answer_len=%d citations=%d",
+        "[output] answer_len=%d citations=%d confidence=%s",
         len(state.get("final_answer", "")),
         len(state.get("citations", [])),
+        state.get("confidence", ""),
     )
     return {}
 
@@ -244,6 +246,7 @@ if __name__ == "__main__":
         "synthesis_input":  "",
         "final_answer":     "",
         "citations":        [],
+        "confidence":       "",
     }
 
     # Stream node-by-node so we can print state after each step
