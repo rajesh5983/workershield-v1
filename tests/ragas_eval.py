@@ -17,13 +17,13 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 
 ollama_llm = ChatOllama(
     model="mistral",
-    base_url="http://192.168.100.10:11434"
+    base_url="http://192.168.100.1:11434"
 )
 judge_llm = LangchainLLMWrapper(ollama_llm)
 
 ollama_embeddings = OllamaEmbeddings(
     model="nomic-embed-text",
-    base_url="http://192.168.100.10:11434"
+    base_url="http://192.168.100.1:11434"
 )
 judge_embeddings = LangchainEmbeddingsWrapper(ollama_embeddings)
 

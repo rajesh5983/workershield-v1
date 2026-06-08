@@ -8,7 +8,7 @@ For each document in docs/corpus_registry.yaml:
   4. Upsert to Qdrant collection 'workershield'
 
 Environment variables:
-  OLLAMA_HOST   — Ollama base URL (default: http://192.168.100.10:11434)
+  OLLAMA_HOST   — Ollama base URL (default: http://192.168.100.1:11434)
   QDRANT_HOST   — Qdrant base URL (default: http://localhost:6333)
 """
 
@@ -33,7 +33,7 @@ from ingest.chunk_strategy import get_chunker
 # Configuration
 # ---------------------------------------------------------------------------
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://192.168.100.10:11434")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://192.168.100.1:11434")
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "http://localhost:6333")
 COLLECTION = "workershield"
 EMBED_MODEL = "nomic-embed-text"
