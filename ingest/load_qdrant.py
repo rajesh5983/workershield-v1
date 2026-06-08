@@ -57,8 +57,13 @@ def _extract_text_by_page(pdf_path: Path) -> list[str]:
     return [page.extract_text() or "" for page in reader.pages]
 
 
+_MAX_EMBED_CHARS = 6_000  # ~1 500 tokens — safe headroom under nomic-embed-text's 8 192-token limit
+
+
 def _embed(text: str) -> list[float]:
     """Call Ollama embeddings endpoint and return the vector."""
+    if len(text) > _MAX_EMBED_CHARS:
+        text = text[:_MAX_EMBED_CHARS]
     resp = requests.post(
         f"{OLLAMA_HOST}/api/embeddings",
         json={"model": EMBED_MODEL, "prompt": text},

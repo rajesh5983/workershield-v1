@@ -92,18 +92,30 @@ def chunk_clause_boundary(text: str, meta: dict) -> list[ChunkDict]:
         # No clauses detected — fall back to recursive
         return chunk_recursive(text, meta)
 
+    _splitter = RecursiveCharacterTextSplitter(
+        chunk_size=512 * 4, chunk_overlap=50 * 4
+    )
     chunks: list[ChunkDict] = []
     for i, (start, clause_num) in enumerate(boundaries):
         end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
         body = text[start:end].strip()
         if not body:
             continue
-        chunks.append({
-            "text": body,
-            "chunk_type": "clause_boundary",
-            "section": clause_num,
-            "page_estimate": _page_estimate(start, total_chars, total_pages),
-        })
+        if len(body) > 512 * 4:
+            for sub in _splitter.split_text(body):
+                chunks.append({
+                    "text": sub,
+                    "chunk_type": "clause_boundary",
+                    "section": clause_num,
+                    "page_estimate": _page_estimate(start, total_chars, total_pages),
+                })
+        else:
+            chunks.append({
+                "text": body,
+                "chunk_type": "clause_boundary",
+                "section": clause_num,
+                "page_estimate": _page_estimate(start, total_chars, total_pages),
+            })
     return chunks
 
 
@@ -196,17 +208,29 @@ def chunk_section_header(text: str, meta: dict) -> list[ChunkDict]:
     if not boundaries:
         return chunk_recursive(text, meta)
 
+    _splitter = RecursiveCharacterTextSplitter(
+        chunk_size=512 * 4, chunk_overlap=50 * 4
+    )
     chunks: list[ChunkDict] = []
 
-    # Text before the first heading
+    # Text before the first heading — sub-split if long
     preamble = text[: boundaries[0][0]].strip()
     if preamble:
-        chunks.append({
-            "text": preamble,
-            "chunk_type": "section_header",
-            "section": "",
-            "page_estimate": _page_estimate(0, total_chars, total_pages),
-        })
+        if len(preamble) > 512 * 4:
+            for sub in _splitter.split_text(preamble):
+                chunks.append({
+                    "text": sub,
+                    "chunk_type": "section_header",
+                    "section": "",
+                    "page_estimate": _page_estimate(0, total_chars, total_pages),
+                })
+        else:
+            chunks.append({
+                "text": preamble,
+                "chunk_type": "section_header",
+                "section": "",
+                "page_estimate": _page_estimate(0, total_chars, total_pages),
+            })
 
     for i, (start, title) in enumerate(boundaries):
         end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
