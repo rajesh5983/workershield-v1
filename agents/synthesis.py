@@ -161,14 +161,12 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": synthesis_input}],
         )
-        raw = message.content[0].text.strip()
-
-        # Strip accidental markdown fences
+        raw = message.content[0].text
+        raw = raw.strip()
         if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rsplit("```", 1)[0]
+            raw = raw.split("\n", 1)[1]   # remove opening ``` or ```json line
+            raw = raw.rsplit("```", 1)[0]  # remove closing ```
+        raw = raw.strip()
 
         parsed: dict = json.loads(raw)
 
