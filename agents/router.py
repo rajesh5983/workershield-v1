@@ -77,7 +77,9 @@ _KEYWORDS: dict[str, list[str]] = {
 
 def _classify_with_haiku(query: str) -> dict[str, Any]:
     """Call Claude Haiku and parse JSON response. Raises on any failure."""
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    from dotenv import load_dotenv
+    load_dotenv()
+    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY at call time
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=128,
