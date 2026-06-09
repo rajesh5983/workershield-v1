@@ -147,7 +147,12 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_message},
             ],
-            options={"num_predict": num_predict},
+            options={
+                "num_predict": num_predict,
+                "temperature": 0.1,
+                # Prevent thinking-token preamble from consuming the visible budget
+                "stop": ["</think>", "<|end|>"],
+            },
         )
         return response.message.content
 

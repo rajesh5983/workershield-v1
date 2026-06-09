@@ -325,7 +325,7 @@ with gr.Blocks(title="WorkerShield") as demo:
                 choices=_STACK_LABELS,
                 value="Anthropic",
                 label="Model Stack",
-                info="Anthropic: Haiku+Sonnet | OpenAI: GPT-4o-mini+GPT-4o | Local: Gemma2+Gemma4",
+                info="Anthropic: Haiku+Sonnet | OpenAI: GPT-4o-mini+GPT-4o | Local: Mistral+Mistral",
                 interactive=True,
             )
 

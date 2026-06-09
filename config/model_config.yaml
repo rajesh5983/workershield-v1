@@ -9,8 +9,8 @@ openai:
   synthesis: gpt-4o
 
 local:
-  router: gemma2:2b
-  synthesis: gemma4:26b
+  router: mistral
+  synthesis: mistral
   base_url: http://192.168.100.1:11434
 
 comparison_models:
@@ -19,4 +19,4 @@ comparison_models:
   - provider: openai
     label: "OpenAI (GPT-4o-mini router + GPT-4o synthesis)"
   - provider: local
-    label: "Local (Gemma2:2b router + Gemma4:26b synthesis)"
+    label: "Local (Mistral router + Mistral synthesis)"
