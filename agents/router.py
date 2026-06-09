@@ -75,11 +75,11 @@ _KEYWORDS: dict[str, list[str]] = {
 # LLM classifier
 # ---------------------------------------------------------------------------
 
-def _classify_with_llm(query: str) -> dict[str, Any]:
-    """Classify via the configured LLM (local Ollama or Anthropic). Raises on any failure."""
-    llm = ModelFactory().get_router_llm()
+def _classify_with_llm(query: str, model_id: str | None = None) -> dict[str, Any]:
+    """Classify via the configured LLM. Raises on any failure."""
+    llm = ModelFactory().get_router_llm(model_id)
     logger.debug("Router using provider=%s model=%s", llm.provider, llm.model)
-    raw = llm.chat(_SYSTEM_PROMPT, query, max_tokens=128).strip()
+    raw = llm.chat(_SYSTEM_PROMPT, query).strip()
 
     # Strip markdown fences if the model wraps the JSON
     if raw.startswith("```"):
@@ -126,9 +126,10 @@ def _classify_with_keywords(query: str) -> dict[str, Any]:
 
 def router_node(state: dict[str, Any]) -> dict[str, Any]:
     """LangGraph node: classify query → detected_domains + cross_domain."""
-    query = state["query"]
+    query    = state["query"]
+    model_id = state.get("router_model_id")  # injected by UI; None → config default
     try:
-        result = _classify_with_llm(query)
+        result = _classify_with_llm(query, model_id)
         logger.debug("LLM classification: %s", result)
     except Exception as exc:
         logger.warning("LLM classification failed (%s); using keyword fallback.", exc)

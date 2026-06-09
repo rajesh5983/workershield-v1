@@ -1,28 +1,45 @@
-model_provider: local  # options: local, anthropic
-
-local:
-  router: gemma4:26b
-  synthesis: gemma4:26b
+ollama:
   base_url: http://192.168.100.1:11434
-  thinking_overhead: 400  # extra tokens added to num_predict for models that use thinking tokens (e.g. Gemma 4)
 
-anthropic:
-  router: claude-haiku-4-5-20251001
-  synthesis: claude-sonnet-4-6
+router_models:
+  - model_id: gemma2:2b
+    provider: ollama
+    model_name: gemma2:2b
+    thinking_overhead: 0
+    max_tokens: 256
+  - model_id: qwen2.5:3b
+    provider: ollama
+    model_name: qwen2.5:3b
+    thinking_overhead: 0
+    max_tokens: 256
 
-comparison_models:
-  - name: gemma4:26b
-    provider: local
-    label: "Gemma 4 26B (Local)"
-  - name: mistral
-    provider: local
-    label: "Mistral (Local)"
-  - name: llama3.2
-    provider: local
-    label: "Llama 3.2 (Local)"
-  - name: claude-haiku-4-5-20251001
-    provider: anthropic
-    label: "Claude Haiku (API)"
-  - name: claude-sonnet-4-6
-    provider: anthropic
-    label: "Claude Sonnet (API)"
+synthesis_models:
+  - model_id: gemma4:26b
+    provider: ollama
+    model_name: gemma4:26b
+    thinking_overhead: 400
+    max_tokens: 1500
+  - model_id: qwen2.5:14b
+    provider: ollama
+    model_name: qwen2.5:14b
+    thinking_overhead: 0
+    max_tokens: 1500
+  - model_id: llama3.2:3b
+    provider: ollama
+    model_name: llama3.2:3b
+    thinking_overhead: 0
+    max_tokens: 1500
+  - model_id: gpt-4o-mini
+    provider: openai
+    model_name: gpt-4o-mini
+    thinking_overhead: 0
+    max_tokens: 1500
+  - model_id: gpt-4o
+    provider: openai
+    model_name: gpt-4o
+    thinking_overhead: 0
+    max_tokens: 1500
+
+defaults:
+  router: gemma2:2b
+  synthesis: gemma4:26b

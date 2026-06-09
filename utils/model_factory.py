@@ -1,8 +1,11 @@
 """
 Model abstraction layer for WorkerShield.
 
-Swap between local Ollama models and Anthropic API by changing
-model_provider in config/model_config.yaml — no code changes required.
+Swap router and synthesis models at runtime by passing a model_id to
+get_router_llm() / get_synthesis_llm(), or let them fall back to the
+defaults block in config/model_config.yaml.
+
+Supported providers: ollama, openai
 """
 
 from __future__ import annotations
@@ -13,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -28,110 +34,121 @@ def get_model_config() -> dict[str, Any]:
 @dataclass
 class LLMClient:
     """
-    Unified chat interface for Ollama (local) and Anthropic API backends.
+    Unified chat interface for Ollama (local) and OpenAI API backends.
 
-    Usage:
-        llm = LLMClient(provider="local", model="gemma4:26b", base_url="http://...", thinking_overhead=400)
-        text = llm.chat(system_prompt="You are...", user_message="...", max_tokens=256)
+    provider: "ollama" | "openai"
+    model:    ollama model tag or OpenAI model name
+    base_url: Ollama host (ignored for openai)
+    thinking_overhead: extra num_predict tokens for Ollama thinking models
+    max_tokens: token budget for the visible response
     """
 
     provider: str
     model: str
     base_url: str | None = None
-    thinking_overhead: int = 0  # extra num_predict budget for models that use internal thinking tokens
+    thinking_overhead: int = 0
+    max_tokens: int = 1500
 
-    def chat(self, system_prompt: str, user_message: str, max_tokens: int = 1500) -> str:
+    def chat(self, system_prompt: str, user_message: str) -> str:
         """Send a message and return the raw text response."""
-        if self.provider == "local":
-            return self._chat_ollama(system_prompt, user_message, max_tokens)
-        if self.provider == "anthropic":
-            return self._chat_anthropic(system_prompt, user_message, max_tokens)
+        if self.provider == "ollama":
+            return self._chat_ollama(system_prompt, user_message)
+        if self.provider == "openai":
+            return self._chat_openai(system_prompt, user_message)
         raise ValueError(f"Unknown provider: {self.provider!r}")
 
-    def _chat_ollama(self, system_prompt: str, user_message: str, max_tokens: int) -> str:
-        import ollama  # lazy import — not required when provider is anthropic
+    def _chat_ollama(self, system_prompt: str, user_message: str) -> str:
+        import ollama  # lazy import
 
-        num_predict = max_tokens + self.thinking_overhead
+        num_predict = self.max_tokens + self.thinking_overhead
         client = ollama.Client(host=self.base_url)
         response = client.chat(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+                {"role": "user",   "content": user_message},
             ],
             options={"num_predict": num_predict},
         )
         return response.message.content
 
-    def _chat_anthropic(self, system_prompt: str, user_message: str, max_tokens: int) -> str:
-        import anthropic  # lazy import — not required when provider is local
+    def _chat_openai(self, system_prompt: str, user_message: str) -> str:
+        from openai import OpenAI  # lazy import
 
-        client = anthropic.Anthropic()
-        message = client.messages.create(
+        client = OpenAI()  # reads OPENAI_API_KEY from env
+        response = client.chat.completions.create(
             model=self.model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
+            max_tokens=self.max_tokens,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_message},
+            ],
         )
-        return message.content[0].text
+        return response.choices[0].message.content
 
 
 class ModelFactory:
     """
-    Build LLMClient instances for each role based on config/model_config.yaml.
+    Build LLMClient instances by looking up a model_id in the registry.
 
-    The active provider is set by the top-level ``model_provider`` key.
+    Registry is loaded from config/model_config.yaml.
+    If no model_id is supplied the defaults block is used.
     """
 
     def __init__(self) -> None:
-        self._config = get_model_config()
-        self._provider = self._config["model_provider"]
-        logger.debug("ModelFactory initialised: provider=%s", self._provider)
+        cfg = get_model_config()
+        self._ollama_base_url: str = cfg["ollama"]["base_url"]
+        self._defaults: dict[str, str] = cfg["defaults"]
 
-    def _local_client(self, model: str) -> LLMClient:
-        cfg = self._config["local"]
+        # Build flat registries keyed by model_id
+        self._router_registry: dict[str, dict] = {
+            e["model_id"]: e for e in cfg.get("router_models", [])
+        }
+        self._synthesis_registry: dict[str, dict] = {
+            e["model_id"]: e for e in cfg.get("synthesis_models", [])
+        }
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def get_router_llm(self, model_id: str | None = None) -> LLMClient:
+        """Return an LLMClient for the router role."""
+        mid = model_id or self._defaults["router"]
+        return self._build(mid, self._router_registry)
+
+    def get_synthesis_llm(self, model_id: str | None = None) -> LLMClient:
+        """Return an LLMClient for the synthesis role."""
+        mid = model_id or self._defaults["synthesis"]
+        return self._build(mid, self._synthesis_registry)
+
+    def router_model_ids(self) -> list[str]:
+        """Ordered list of available router model_ids (for UI dropdowns)."""
+        return list(self._router_registry)
+
+    def synthesis_model_ids(self) -> list[str]:
+        """Ordered list of available synthesis model_ids (for UI dropdowns)."""
+        return list(self._synthesis_registry)
+
+    def default_router_model(self) -> str:
+        return self._defaults["router"]
+
+    def default_synthesis_model(self) -> str:
+        return self._defaults["synthesis"]
+
+    # ── internal ──────────────────────────────────────────────────────────────
+
+    def _build(self, model_id: str, registry: dict[str, dict]) -> LLMClient:
+        entry = registry.get(model_id)
+        if entry is None:
+            available = list(registry)
+            raise ValueError(
+                f"model_id {model_id!r} not found in registry. "
+                f"Available: {available}"
+            )
+        provider = entry["provider"]
         return LLMClient(
-            provider="local",
-            model=model,
-            base_url=cfg["base_url"],
-            thinking_overhead=cfg.get("thinking_overhead", 0),
+            provider=provider,
+            model=entry["model_name"],
+            base_url=self._ollama_base_url if provider == "ollama" else None,
+            thinking_overhead=entry.get("thinking_overhead", 0),
+            max_tokens=entry.get("max_tokens", 1500),
         )
-
-    def get_router_llm(self) -> LLMClient:
-        """Return the LLM client configured for the router/classifier role."""
-        if self._provider == "local":
-            return self._local_client(self._config["local"]["router"])
-        return LLMClient(provider="anthropic", model=self._config["anthropic"]["router"])
-
-    def get_synthesis_llm(self) -> LLMClient:
-        """Return the LLM client configured for the synthesis role."""
-        if self._provider == "local":
-            return self._local_client(self._config["local"]["synthesis"])
-        return LLMClient(provider="anthropic", model=self._config["anthropic"]["synthesis"])
-
-    def get_comparison_llm(self, model_name: str) -> LLMClient:
-        """
-        Return an LLMClient for any model listed in comparison_models.
-
-        Used by the Gradio comparison panel to run side-by-side evaluations.
-        """
-        for entry in self._config.get("comparison_models", []):
-            if entry["name"] == model_name:
-                if entry["provider"] == "local":
-                    return self._local_client(model_name)
-                return LLMClient(provider="anthropic", model=model_name)
-        raise ValueError(f"Model {model_name!r} not found in comparison_models")
-
-    @property
-    def active_provider(self) -> str:
-        return self._provider
-
-    @property
-    def router_model(self) -> str:
-        cfg_key = "local" if self._provider == "local" else "anthropic"
-        return self._config[cfg_key]["router"]
-
-    @property
-    def synthesis_model(self) -> str:
-        cfg_key = "local" if self._provider == "local" else "anthropic"
-        return self._config[cfg_key]["synthesis"]

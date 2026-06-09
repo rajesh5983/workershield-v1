@@ -3,7 +3,7 @@ WorkerShield Gradio demo interface.
 
 Compiles the LangGraph graph once at startup, then invokes it on each query.
 Displays the synthesised markdown answer, a citations table, domain badges,
-and a confidence indicator.
+a confidence indicator, and the active router/synthesis model names.
 """
 
 from __future__ import annotations
@@ -17,12 +17,19 @@ load_dotenv("/projects/workershield-v1/.env")
 import gradio as gr  # noqa: E402 — must come after load_dotenv
 
 from agents.graph import build_graph  # noqa: E402
+from utils.model_factory import ModelFactory  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Compile graph once at startup
+# Compile graph + model registry once at startup
 # ---------------------------------------------------------------------------
 
-graph = build_graph().compile()
+graph   = build_graph().compile()
+_mf     = ModelFactory()
+
+_ROUTER_CHOICES    = _mf.router_model_ids()
+_SYNTHESIS_CHOICES = _mf.synthesis_model_ids()
+_DEFAULT_ROUTER    = _mf.default_router_model()
+_DEFAULT_SYNTHESIS = _mf.default_synthesis_model()
 
 # ---------------------------------------------------------------------------
 # Domain badge config
@@ -40,6 +47,11 @@ _CONFIDENCE_STYLES = {
     "high":   ("HIGH",   "#166534", "#DCFCE7"),
     "medium": ("MEDIUM", "#92400E", "#FEF3C7"),
     "low":    ("LOW",    "#991B1B", "#FEE2E2"),
+}
+
+_PROVIDER_LABELS = {
+    "ollama": "Ollama (local)",
+    "openai": "OpenAI API",
 }
 
 # ---------------------------------------------------------------------------
@@ -116,6 +128,13 @@ _CSS = """
                           border-bottom:1px solid #F1F5F9; }
 #citations-table tr:last-child td { border-bottom:none; }
 
+/* ── model status table ──────────────────────────────────────────────────── */
+#model-status table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+#model-status th    { background:#F1F5F9; font-weight:600; padding:6px 10px;
+                       text-align:left; border-bottom:1px solid #E2E8F0; }
+#model-status td    { padding:5px 10px; border-bottom:1px solid #F1F5F9; }
+#model-status tr:last-child td { border-bottom:none; }
+
 /* ── example buttons ─────────────────────────────────────────────────────── */
 .ws-example { font-size:0.82rem !important; }
 
@@ -178,11 +197,57 @@ def _citations_html(citations: list[dict]) -> str:
     return f'<div id="citations-table">{header}{"".join(rows)}</tbody></table></div>'
 
 
+def _model_status_html(
+    router_id: str,
+    synthesis_id: str,
+    detected_domains: list[str] | None = None,
+    confidence: str = "",
+) -> str:
+    """Render a compact summary table showing active models and run metadata."""
+    mf = ModelFactory()
+
+    def _provider_label(registry_method, mid: str) -> str:
+        try:
+            client = registry_method(mid)
+            return _PROVIDER_LABELS.get(client.provider, client.provider)
+        except Exception:
+            return "unknown"
+
+    router_provider    = _provider_label(mf.get_router_llm, router_id)
+    synthesis_provider = _provider_label(mf.get_synthesis_llm, synthesis_id)
+
+    domains_str = ", ".join(detected_domains) if detected_domains else "—"
+    conf_str    = confidence.upper() if confidence else "—"
+
+    rows = [
+        ("Router model",    router_id,    router_provider),
+        ("Synthesis model", synthesis_id, synthesis_provider),
+        ("Domains hit",     domains_str,  ""),
+        ("Confidence",      conf_str,     ""),
+    ]
+
+    html_rows = "".join(
+        f"<tr><td style='color:#64748B;'>{label}</td>"
+        f"<td><strong>{value}</strong></td>"
+        f"<td style='color:#94A3B8;font-size:0.78rem;'>{extra}</td></tr>"
+        for label, value, extra in rows
+    )
+
+    return (
+        '<div id="model-status">'
+        "<table><thead><tr>"
+        "<th>Parameter</th><th>Value</th><th>Provider</th>"
+        "</tr></thead><tbody>"
+        f"{html_rows}"
+        "</tbody></table></div>"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Graph invocation
 # ---------------------------------------------------------------------------
 
-def _run_query(query: str):
+def _run_query(query: str, router_model_id: str, synthesis_model_id: str):
     """Invoke the compiled graph and return UI component updates."""
     if not query or not query.strip():
         yield (
@@ -190,6 +255,7 @@ def _run_query(query: str):
             gr.HTML(_badge_html([])),
             gr.HTML(_confidence_html("")),
             gr.HTML("<p style='color:#94A3B8;'>Submit a query to see sources.</p>"),
+            gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
         )
         return
 
@@ -199,16 +265,22 @@ def _run_query(query: str):
         gr.HTML(_badge_html([])),
         gr.HTML(_confidence_html("")),
         gr.HTML("<p style='color:#94A3B8;'>Retrieving sources…</p>"),
+        gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
     )
 
     try:
-        result = graph.invoke({"query": query.strip()})
+        result = graph.invoke({
+            "query":               query.strip(),
+            "router_model_id":     router_model_id,
+            "synthesis_model_id":  synthesis_model_id,
+        })
     except Exception as exc:
         yield (
             f"**Error:** {exc}",
             gr.HTML(_badge_html([])),
             gr.HTML(_confidence_html("low")),
             gr.HTML("<p style='color:#EF4444;'>Graph invocation failed.</p>"),
+            gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
         )
         return
 
@@ -229,6 +301,7 @@ def _run_query(query: str):
         gr.HTML(_badge_html(detected_domains)),
         gr.HTML(_confidence_html(confidence)),
         gr.HTML(_citations_html(citations)),
+        gr.HTML(_model_status_html(router_model_id, synthesis_model_id, detected_domains, confidence)),
     )
 
 
@@ -255,6 +328,21 @@ with gr.Blocks(title="WorkerShield") as demo:
                 lines=2,
                 elem_id="query-box",
             )
+
+            # ── Model selection ──────────────────────────────────────────────
+            with gr.Row():
+                router_dd = gr.Dropdown(
+                    choices=_ROUTER_CHOICES,
+                    value=_DEFAULT_ROUTER,
+                    label="Router model",
+                    interactive=True,
+                )
+                synthesis_dd = gr.Dropdown(
+                    choices=_SYNTHESIS_CHOICES,
+                    value=_DEFAULT_SYNTHESIS,
+                    label="Synthesis model",
+                    interactive=True,
+                )
 
             with gr.Row():
                 submit_btn = gr.Button("Ask WorkerShield", variant="primary", elem_id="submit-btn")
@@ -289,25 +377,36 @@ with gr.Blocks(title="WorkerShield") as demo:
                     "<p style='color:#94A3B8;'>Submit a query to see sources.</p>"
                 )
 
+            with gr.Accordion("Run summary", open=False):
+                model_status_html = gr.HTML(
+                    _model_status_html(_DEFAULT_ROUTER, _DEFAULT_SYNTHESIS)
+                )
+
     # ── Event wiring ────────────────────────────────────────────────────────
 
-    outputs = [answer_out, badge_html, confidence_html, citations_html]
+    outputs = [answer_out, badge_html, confidence_html, citations_html, model_status_html]
 
     submit_btn.click(
         fn=_run_query,
-        inputs=query_box,
+        inputs=[query_box, router_dd, synthesis_dd],
         outputs=outputs,
     )
 
     query_box.submit(
         fn=_run_query,
-        inputs=query_box,
+        inputs=[query_box, router_dd, synthesis_dd],
         outputs=outputs,
     )
 
     clear_btn.click(
-        fn=lambda: ("", _badge_html([]), _confidence_html(""),
-                    "<p style='color:#94A3B8;'>Submit a query to see sources.</p>"),
+        fn=lambda r, s: (
+            "",
+            _badge_html([]),
+            _confidence_html(""),
+            "<p style='color:#94A3B8;'>Submit a query to see sources.</p>",
+            _model_status_html(r, s),
+        ),
+        inputs=[router_dd, synthesis_dd],
         outputs=outputs,
     )
 

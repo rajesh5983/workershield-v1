@@ -189,10 +189,11 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ── LLM call ─────────────────────────────────────────────────────────────
+    model_id = state.get("synthesis_model_id")  # injected by UI; None → config default
     try:
-        llm = ModelFactory().get_synthesis_llm()
+        llm = ModelFactory().get_synthesis_llm(model_id)
         logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
-        raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input, max_tokens=1500)
+        raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input)
         parsed = _parse_synthesis_response(raw)
         if "confidence" not in parsed:
             logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
