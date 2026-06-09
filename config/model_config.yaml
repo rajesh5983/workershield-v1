@@ -1,0 +1,24 @@
+model_provider: local  # options: local, anthropic
+
+local:
+  router: mistral  # ollama model name — change to gemma3 once pulled
+  synthesis: mistral
+  base_url: http://192.168.100.1:11434
+
+anthropic:
+  router: claude-haiku-4-5-20251001
+  synthesis: claude-sonnet-4-6
+
+comparison_models:
+  - name: gemma3
+    provider: local
+    label: "Gemma 3 (Local)"
+  - name: mistral
+    provider: local
+    label: "Mistral (Local)"
+  - name: llama3.2
+    provider: local
+    label: "Llama 3.2 (Local)"
+  - name: claude-haiku-4-5-20251001
+    provider: anthropic
+    label: "Claude Haiku (API)"

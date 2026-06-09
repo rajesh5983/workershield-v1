@@ -1,8 +1,8 @@
 """
 WorkerShield domain router — first node in the LangGraph graph.
 
-Primary:  Claude Haiku via Anthropic API — JSON classification.
-Fallback: keyword matching when the API call fails.
+Primary:  LLM classification via ModelFactory (local Ollama or Anthropic API).
+Fallback: keyword matching when the LLM call fails.
 
 Returns a partial WorkerShieldState dict:
   detected_domains: list[str]  — subset of {safeshift, fairdesk, healthnav}
@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
-import anthropic
 from dotenv import load_dotenv
+
+from utils.model_factory import ModelFactory
 
 load_dotenv()
 
@@ -72,19 +72,15 @@ _KEYWORDS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Haiku classifier
+# LLM classifier
 # ---------------------------------------------------------------------------
 
-def _classify_with_haiku(query: str) -> dict[str, Any]:
-    """Call Claude Haiku and parse JSON response. Raises on any failure."""
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env (loaded at module level)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=128,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": query}],
-    )
-    raw = message.content[0].text.strip()
+def _classify_with_llm(query: str) -> dict[str, Any]:
+    """Classify via the configured LLM (local Ollama or Anthropic). Raises on any failure."""
+    llm = ModelFactory().get_router_llm()
+    logger.debug("Router using provider=%s model=%s", llm.provider, llm.model)
+    raw = llm.chat(_SYSTEM_PROMPT, query, max_tokens=128).strip()
+
     # Strip markdown fences if the model wraps the JSON
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -132,10 +128,10 @@ def router_node(state: dict[str, Any]) -> dict[str, Any]:
     """LangGraph node: classify query → detected_domains + cross_domain."""
     query = state["query"]
     try:
-        result = _classify_with_haiku(query)
-        logger.debug("Haiku classification: %s", result)
+        result = _classify_with_llm(query)
+        logger.debug("LLM classification: %s", result)
     except Exception as exc:
-        logger.warning("Haiku classification failed (%s); using keyword fallback.", exc)
+        logger.warning("LLM classification failed (%s); using keyword fallback.", exc)
         result = _classify_with_keywords(query)
         logger.debug("Keyword classification: %s", result)
     return result
