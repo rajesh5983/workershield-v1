@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from dotenv import load_dotenv
 
-from utils.model_factory import ModelFactory
+from utils.model_factory import ModelFactory, parse_llm_json
 
 load_dotenv()
 
@@ -130,37 +129,6 @@ def _extract_citations(answer_text: str, all_chunks: list[dict]) -> list[dict]:
     return citations
 
 
-# ---------------------------------------------------------------------------
-# JSON parser
-# ---------------------------------------------------------------------------
-
-def _parse_synthesis_response(raw: str) -> dict:
-    """Robustly parse Sonnet's JSON response, handling markdown fences and
-    escaped-quote issues that break a straight json.loads()."""
-    # Strip markdown fences
-    raw = raw.strip()
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:])
-        raw = raw.rsplit("```", 1)[0].strip()
-
-    # Try direct parse first
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Fallback: extract answer field directly with regex
-    answer_match = re.search(
-        r'"answer"\s*:\s*"(.*?)(?<!\\)"\s*,\s*"citations"', raw, re.DOTALL
-    )
-    if answer_match:
-        answer = answer_match.group(1).replace("\\n", "\n").replace('\\"', '"')
-        return {"answer": answer, "citations": [], "confidence": "medium"}
-
-    # Final fallback: return raw text as answer; omit confidence so the
-    # chunk-based scorer in synthesis_node assigns an accurate value
-    return {"answer": raw, "citations": []}
 
 
 # ---------------------------------------------------------------------------
@@ -189,12 +157,11 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ── LLM call ─────────────────────────────────────────────────────────────
-    model_id = state.get("synthesis_model_id")  # injected by UI; None → config default
     try:
-        llm = ModelFactory().get_synthesis_llm(model_id)
+        llm = ModelFactory().get_synthesis_llm()
         logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
         raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input)
-        parsed = _parse_synthesis_response(raw)
+        parsed = parse_llm_json(raw) or {"answer": raw, "citations": []}
         if "confidence" not in parsed:
             logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
     except Exception as exc:

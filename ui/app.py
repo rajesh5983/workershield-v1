@@ -3,7 +3,7 @@ WorkerShield Gradio demo interface.
 
 Compiles the LangGraph graph once at startup, then invokes it on each query.
 Displays the synthesised markdown answer, a citations table, domain badges,
-a confidence indicator, and the active router/synthesis model names.
+a confidence indicator, and the active model stack summary.
 """
 
 from __future__ import annotations
@@ -17,19 +17,13 @@ load_dotenv("/projects/workershield-v1/.env")
 import gradio as gr  # noqa: E402 — must come after load_dotenv
 
 from agents.graph import build_graph  # noqa: E402
-from utils.model_factory import ModelFactory  # noqa: E402
+from utils.model_factory import ModelFactory, set_model_provider  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Compile graph + model registry once at startup
+# Compile graph once at startup
 # ---------------------------------------------------------------------------
 
-graph   = build_graph().compile()
-_mf     = ModelFactory()
-
-_ROUTER_CHOICES    = _mf.router_model_ids()
-_SYNTHESIS_CHOICES = _mf.synthesis_model_ids()
-_DEFAULT_ROUTER    = _mf.default_router_model()
-_DEFAULT_SYNTHESIS = _mf.default_synthesis_model()
+graph = build_graph().compile()
 
 # ---------------------------------------------------------------------------
 # Domain badge config
@@ -41,18 +35,14 @@ _DOMAIN_COLOURS = {
     "healthnav": ("#B45309", "#FEF3C7", "HealthNav"),
 }
 
-_DOMAIN_KEYS = ["safeshift", "fairdesk", "healthnav"]
-
 _CONFIDENCE_STYLES = {
     "high":   ("HIGH",   "#166534", "#DCFCE7"),
     "medium": ("MEDIUM", "#92400E", "#FEF3C7"),
     "low":    ("LOW",    "#991B1B", "#FEE2E2"),
 }
 
-_PROVIDER_LABELS = {
-    "ollama": "Ollama (local)",
-    "openai": "OpenAI API",
-}
+_STACK_LABELS = ["Anthropic", "OpenAI", "Local"]
+_STACK_PROVIDERS = {label: label.lower() for label in _STACK_LABELS}
 
 # ---------------------------------------------------------------------------
 # Example queries
@@ -198,32 +188,25 @@ def _citations_html(citations: list[dict]) -> str:
 
 
 def _model_status_html(
-    router_id: str,
-    synthesis_id: str,
     detected_domains: list[str] | None = None,
     confidence: str = "",
 ) -> str:
-    """Render a compact summary table showing active models and run metadata."""
-    mf = ModelFactory()
-
-    def _provider_label(registry_method, mid: str) -> str:
-        try:
-            client = registry_method(mid)
-            return _PROVIDER_LABELS.get(client.provider, client.provider)
-        except Exception:
-            return "unknown"
-
-    router_provider    = _provider_label(mf.get_router_llm, router_id)
-    synthesis_provider = _provider_label(mf.get_synthesis_llm, synthesis_id)
+    """Render a compact summary table showing the active model stack and run metadata."""
+    mf              = ModelFactory()
+    provider        = mf.active_provider()
+    router_model    = mf.router_model_name()
+    synthesis_model = mf.synthesis_model_name()
+    stack_label     = provider.capitalize()
 
     domains_str = ", ".join(detected_domains) if detected_domains else "—"
     conf_str    = confidence.upper() if confidence else "—"
 
     rows = [
-        ("Router model",    router_id,    router_provider),
-        ("Synthesis model", synthesis_id, synthesis_provider),
-        ("Domains hit",     domains_str,  ""),
-        ("Confidence",      conf_str,     ""),
+        ("Stack",           stack_label,     ""),
+        ("Router model",    router_model,    provider),
+        ("Synthesis model", synthesis_model, provider),
+        ("Domains hit",     domains_str,     ""),
+        ("Confidence",      conf_str,        ""),
     ]
 
     html_rows = "".join(
@@ -247,17 +230,20 @@ def _model_status_html(
 # Graph invocation
 # ---------------------------------------------------------------------------
 
-def _run_query(query: str, router_model_id: str, synthesis_model_id: str):
-    """Invoke the compiled graph and return UI component updates."""
+def _run_query(query: str, stack_label: str):
+    """Invoke the compiled graph and yield UI component updates."""
     if not query or not query.strip():
         yield (
             "",
             gr.HTML(_badge_html([])),
             gr.HTML(_confidence_html("")),
             gr.HTML("<p style='color:#94A3B8;'>Submit a query to see sources.</p>"),
-            gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
+            gr.HTML(_model_status_html()),
         )
         return
+
+    # Apply the selected stack before querying
+    set_model_provider(_STACK_PROVIDERS[stack_label])
 
     # Yield a "thinking" state immediately
     yield (
@@ -265,29 +251,25 @@ def _run_query(query: str, router_model_id: str, synthesis_model_id: str):
         gr.HTML(_badge_html([])),
         gr.HTML(_confidence_html("")),
         gr.HTML("<p style='color:#94A3B8;'>Retrieving sources…</p>"),
-        gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
+        gr.HTML(_model_status_html()),
     )
 
     try:
-        result = graph.invoke({
-            "query":               query.strip(),
-            "router_model_id":     router_model_id,
-            "synthesis_model_id":  synthesis_model_id,
-        })
+        result = graph.invoke({"query": query.strip()})
     except Exception as exc:
         yield (
             f"**Error:** {exc}",
             gr.HTML(_badge_html([])),
             gr.HTML(_confidence_html("low")),
             gr.HTML("<p style='color:#EF4444;'>Graph invocation failed.</p>"),
-            gr.HTML(_model_status_html(router_model_id, synthesis_model_id)),
+            gr.HTML(_model_status_html()),
         )
         return
 
-    # Parse final_answer (it's a JSON string containing the answer markdown)
+    # Parse final_answer (JSON string containing the answer markdown)
     raw_final = result.get("final_answer", "")
     try:
-        parsed = json.loads(raw_final)
+        parsed    = json.loads(raw_final)
         answer_md = parsed.get("answer", raw_final)
     except (json.JSONDecodeError, TypeError):
         answer_md = raw_final
@@ -301,8 +283,17 @@ def _run_query(query: str, router_model_id: str, synthesis_model_id: str):
         gr.HTML(_badge_html(detected_domains)),
         gr.HTML(_confidence_html(confidence)),
         gr.HTML(_citations_html(citations)),
-        gr.HTML(_model_status_html(router_model_id, synthesis_model_id, detected_domains, confidence)),
+        gr.HTML(_model_status_html(detected_domains, confidence)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Stack change handler
+# ---------------------------------------------------------------------------
+
+def _on_stack_change(stack_label: str) -> str:
+    set_model_provider(_STACK_PROVIDERS[stack_label])
+    return _model_status_html()
 
 
 # ---------------------------------------------------------------------------
@@ -329,20 +320,14 @@ with gr.Blocks(title="WorkerShield") as demo:
                 elem_id="query-box",
             )
 
-            # ── Model selection ──────────────────────────────────────────────
-            with gr.Row():
-                router_dd = gr.Dropdown(
-                    choices=_ROUTER_CHOICES,
-                    value=_DEFAULT_ROUTER,
-                    label="Router model",
-                    interactive=True,
-                )
-                synthesis_dd = gr.Dropdown(
-                    choices=_SYNTHESIS_CHOICES,
-                    value=_DEFAULT_SYNTHESIS,
-                    label="Synthesis model",
-                    interactive=True,
-                )
+            # ── Model stack selector ─────────────────────────────────────────
+            stack_dd = gr.Dropdown(
+                choices=_STACK_LABELS,
+                value="Anthropic",
+                label="Model Stack",
+                info="Anthropic: Haiku+Sonnet | OpenAI: GPT-4o-mini+GPT-4o | Local: Gemma2+Gemma4",
+                interactive=True,
+            )
 
             with gr.Row():
                 submit_btn = gr.Button("Ask WorkerShield", variant="primary", elem_id="submit-btn")
@@ -378,9 +363,7 @@ with gr.Blocks(title="WorkerShield") as demo:
                 )
 
             with gr.Accordion("Run summary", open=False):
-                model_status_html = gr.HTML(
-                    _model_status_html(_DEFAULT_ROUTER, _DEFAULT_SYNTHESIS)
-                )
+                model_status_html = gr.HTML(_model_status_html())
 
     # ── Event wiring ────────────────────────────────────────────────────────
 
@@ -388,26 +371,32 @@ with gr.Blocks(title="WorkerShield") as demo:
 
     submit_btn.click(
         fn=_run_query,
-        inputs=[query_box, router_dd, synthesis_dd],
+        inputs=[query_box, stack_dd],
         outputs=outputs,
     )
 
     query_box.submit(
         fn=_run_query,
-        inputs=[query_box, router_dd, synthesis_dd],
+        inputs=[query_box, stack_dd],
         outputs=outputs,
     )
 
     clear_btn.click(
-        fn=lambda r, s: (
+        fn=lambda: (
             "",
             _badge_html([]),
             _confidence_html(""),
             "<p style='color:#94A3B8;'>Submit a query to see sources.</p>",
-            _model_status_html(r, s),
+            _model_status_html(),
         ),
-        inputs=[router_dd, synthesis_dd],
+        inputs=[],
         outputs=outputs,
+    )
+
+    stack_dd.change(
+        fn=_on_stack_change,
+        inputs=[stack_dd],
+        outputs=[model_status_html],
     )
 
 

@@ -11,13 +11,12 @@ Returns a partial WorkerShieldState dict:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from dotenv import load_dotenv
 
-from utils.model_factory import ModelFactory
+from utils.model_factory import ModelFactory, parse_llm_json
 
 load_dotenv()
 
@@ -75,23 +74,19 @@ _KEYWORDS: dict[str, list[str]] = {
 # LLM classifier
 # ---------------------------------------------------------------------------
 
-def _classify_with_llm(query: str, model_id: str | None = None) -> dict[str, Any]:
+def _classify_with_llm(query: str) -> dict[str, Any]:
     """Classify via the configured LLM. Raises on any failure."""
-    llm = ModelFactory().get_router_llm(model_id)
+    llm = ModelFactory().get_router_llm()
     logger.debug("Router using provider=%s model=%s", llm.provider, llm.model)
-    raw = llm.chat(_SYSTEM_PROMPT, query).strip()
-
-    # Strip markdown fences if the model wraps the JSON
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    result = json.loads(raw)
+    raw    = llm.chat(_SYSTEM_PROMPT, query).strip()
+    result = parse_llm_json(raw)
+    if not result:
+        raise ValueError(f"Could not parse router response as JSON: {raw[:120]!r}")
 
     # Normalise: keep only known domains, recompute cross_domain
     domains = [d for d in result.get("detected_domains", []) if d in DOMAINS]
     if not domains:
-        domains = ["safeshift"]  # safe default — shouldn't happen in practice
+        domains = ["safeshift"]  # safe default
     return {
         "detected_domains": domains,
         "cross_domain": len(domains) >= 2,
@@ -126,10 +121,9 @@ def _classify_with_keywords(query: str) -> dict[str, Any]:
 
 def router_node(state: dict[str, Any]) -> dict[str, Any]:
     """LangGraph node: classify query → detected_domains + cross_domain."""
-    query    = state["query"]
-    model_id = state.get("router_model_id")  # injected by UI; None → config default
+    query = state["query"]
     try:
-        result = _classify_with_llm(query, model_id)
+        result = _classify_with_llm(query)
         logger.debug("LLM classification: %s", result)
     except Exception as exc:
         logger.warning("LLM classification failed (%s); using keyword fallback.", exc)

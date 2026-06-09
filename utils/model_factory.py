@@ -1,17 +1,19 @@
 """
 Model abstraction layer for WorkerShield.
 
-Swap router and synthesis models at runtime by passing a model_id to
-get_router_llm() / get_synthesis_llm(), or let them fall back to the
-defaults block in config/model_config.yaml.
+Active provider (anthropic | openai | local) is read from model_provider
+in config/model_config.yaml.  Switch stacks by calling set_model_provider()
+or editing the file; ModelFactory re-reads config on every instantiation.
 
-Supported providers: ollama, openai, anthropic
+Supported providers: anthropic, openai, local (Ollama)
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,16 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "model_config.yaml"
 
+# Ollama models that emit a thinking preamble before the actual response.
+# The extra tokens are added to num_predict so the answer isn't truncated.
+_THINKING_OVERHEAD: dict[str, int] = {
+    "gemma4:26b": 400,
+}
+
+
+# ---------------------------------------------------------------------------
+# Config I/O
+# ---------------------------------------------------------------------------
 
 def get_model_config() -> dict[str, Any]:
     """Return the parsed model_config.yaml as a dict."""
@@ -31,26 +43,91 @@ def get_model_config() -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def set_model_provider(provider: str) -> None:
+    """Overwrite the model_provider line in config/model_config.yaml in-place."""
+    text = _CONFIG_PATH.read_text()
+    text = re.sub(
+        r'^model_provider:\s*\S+.*$',
+        f'model_provider: {provider}',
+        text,
+        flags=re.MULTILINE,
+    )
+    _CONFIG_PATH.write_text(text)
+
+
+# ---------------------------------------------------------------------------
+# Shared JSON parser
+# ---------------------------------------------------------------------------
+
+def parse_llm_json(text: str) -> dict | None:
+    """Parse JSON from LLM output, tolerating markdown fences and minor formatting errors.
+
+    Strategy: try a clean parse first (preserves apostrophes in string values),
+    then fall back to single-quote replacement for local models that emit
+    Python-dict-style output.
+    """
+    if not text:
+        return None
+
+    # Strip markdown fences
+    text = re.sub(r'```(?:json)?\s*', '', text)
+    text = re.sub(r'```\s*$', '', text).strip()
+
+    # Find outermost { }
+    start = text.find('{')
+    end   = text.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    candidate = text[start:end + 1]
+
+    # Pass 1 — clean parse (handles Anthropic/OpenAI proper JSON)
+    clean = re.sub(r',\s*}', '}', candidate)
+    clean = re.sub(r',\s*]', ']', clean)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 2 — single-quote + Python literal fixes (for local models)
+    clean2 = candidate.replace("'", '"')
+    clean2 = re.sub(r'\bTrue\b',  'true',  clean2)
+    clean2 = re.sub(r'\bFalse\b', 'false', clean2)
+    clean2 = re.sub(r'\bNone\b',  'null',  clean2)
+    clean2 = re.sub(r',\s*}', '}', clean2)
+    clean2 = re.sub(r',\s*]', ']', clean2)
+    try:
+        return json.loads(clean2)
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Unified LLM client
+# ---------------------------------------------------------------------------
+
 @dataclass
 class LLMClient:
     """
     Unified chat interface for Ollama, OpenAI, and Anthropic backends.
 
     provider: "ollama" | "openai" | "anthropic"
-    model:    ollama model tag, OpenAI model name, or Anthropic model ID
-    base_url: Ollama host URL (ignored for openai/anthropic)
-    thinking_overhead: extra num_predict tokens for Ollama thinking models (0 for API providers)
-    max_tokens: token budget for the visible response
+    model:    model tag / name / ID for the chosen provider
+    base_url: Ollama host URL (ignored for openai / anthropic)
+    max_tokens: visible response token budget
+    thinking_overhead: extra num_predict tokens for Ollama thinking models
     """
 
-    provider: str
-    model: str
-    base_url: str | None = None
+    provider:          str
+    model:             str
+    base_url:          str | None = None
+    max_tokens:        int = 1500
     thinking_overhead: int = 0
-    max_tokens: int = 1500
 
     def chat(self, system_prompt: str, user_message: str) -> str:
-        """Send a message and return the raw text response."""
+        """Dispatch to the correct backend and return the raw text response."""
         if self.provider == "ollama":
             return self._chat_ollama(system_prompt, user_message)
         if self.provider == "openai":
@@ -101,68 +178,64 @@ class LLMClient:
         return message.content[0].text
 
 
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
 class ModelFactory:
     """
-    Build LLMClient instances by looking up a model_id in the registry.
+    Build LLMClient instances from config/model_config.yaml.
 
-    Registry is loaded from config/model_config.yaml.
-    If no model_id is supplied the defaults block is used.
+    The active provider is the model_provider key in the config.
+    Call set_model_provider() to switch stacks; ModelFactory re-reads the
+    config on each instantiation so the change takes effect immediately.
     """
 
     def __init__(self) -> None:
         cfg = get_model_config()
-        self._ollama_base_url: str = cfg["ollama"]["base_url"]
-        self._defaults: dict[str, str] = cfg["defaults"]
-
-        # Build flat registries keyed by model_id
-        self._router_registry: dict[str, dict] = {
-            e["model_id"]: e for e in cfg.get("router_models", [])
-        }
-        self._synthesis_registry: dict[str, dict] = {
-            e["model_id"]: e for e in cfg.get("synthesis_models", [])
-        }
+        self._provider: str = cfg.get("model_provider", "anthropic")
+        self._cfg = cfg
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def get_router_llm(self, model_id: str | None = None) -> LLMClient:
-        """Return an LLMClient for the router role."""
-        mid = model_id or self._defaults["router"]
-        return self._build(mid, self._router_registry)
+    def get_router_llm(self) -> LLMClient:
+        """Return an LLMClient configured for the router role."""
+        return self._build("router")
 
-    def get_synthesis_llm(self, model_id: str | None = None) -> LLMClient:
-        """Return an LLMClient for the synthesis role."""
-        mid = model_id or self._defaults["synthesis"]
-        return self._build(mid, self._synthesis_registry)
+    def get_synthesis_llm(self) -> LLMClient:
+        """Return an LLMClient configured for the synthesis role."""
+        return self._build("synthesis")
 
-    def router_model_ids(self) -> list[str]:
-        """Ordered list of available router model_ids (for UI dropdowns)."""
-        return list(self._router_registry)
+    def active_provider(self) -> str:
+        return self._provider
 
-    def synthesis_model_ids(self) -> list[str]:
-        """Ordered list of available synthesis model_ids (for UI dropdowns)."""
-        return list(self._synthesis_registry)
+    def router_model_name(self) -> str:
+        return self._cfg[self._provider]["router"]
 
-    def default_router_model(self) -> str:
-        return self._defaults["router"]
-
-    def default_synthesis_model(self) -> str:
-        return self._defaults["synthesis"]
+    def synthesis_model_name(self) -> str:
+        return self._cfg[self._provider]["synthesis"]
 
     # ── internal ──────────────────────────────────────────────────────────────
 
-    def _build(self, model_id: str, registry: dict[str, dict]) -> LLMClient:
-        entry = registry.get(model_id)
-        if entry is None:
-            available = list(registry)
+    def _build(self, role: str) -> LLMClient:
+        provider     = self._provider
+        provider_cfg = self._cfg.get(provider, {})
+        model        = provider_cfg.get(role)
+        if not model:
             raise ValueError(
-                f"model_id {model_id!r} not found in registry. "
-                f"Available: {available}"
+                f"No {role!r} model configured for provider {provider!r}"
             )
-        provider = entry["provider"]
+
+        # "local" maps to Ollama internally
+        llm_provider = "ollama" if provider == "local" else provider
+        base_url     = provider_cfg.get("base_url") if provider == "local" else None
+        max_tokens   = 256 if role == "router" else 1500
+        overhead     = _THINKING_OVERHEAD.get(model, 0) if llm_provider == "ollama" else 0
+
         return LLMClient(
-            provider=provider,
-            model=entry["model_name"],
-            base_url=self._ollama_base_url if provider == "ollama" else None,
-            thinking_overhead=entry.get("thinking_overhead", 0),
-            max_tokens=entry.get("max_tokens", 1500),
+            provider=llm_provider,
+            model=model,
+            base_url=base_url,
+            max_tokens=max_tokens,
+            thinking_overhead=overhead,
         )

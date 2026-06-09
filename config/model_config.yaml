@@ -1,55 +1,22 @@
-ollama:
-  base_url: http://192.168.100.1:11434
+model_provider: anthropic
 
-router_models:
-  - model_id: gemma2:2b
-    provider: ollama
-    model_name: gemma2:2b
-    thinking_overhead: 0
-    max_tokens: 256
-  - model_id: qwen2.5:3b
-    provider: ollama
-    model_name: qwen2.5:3b
-    thinking_overhead: 0
-    max_tokens: 256
+anthropic:
+  router: claude-haiku-4-5-20251001
+  synthesis: claude-sonnet-4-6
 
-synthesis_models:
-  - model_id: gemma4:26b
-    provider: ollama
-    model_name: gemma4:26b
-    thinking_overhead: 400
-    max_tokens: 1500
-  - model_id: qwen2.5:14b
-    provider: ollama
-    model_name: qwen2.5:14b
-    thinking_overhead: 0
-    max_tokens: 1500
-  - model_id: llama3.2:3b
-    provider: ollama
-    model_name: llama3.2:3b
-    thinking_overhead: 0
-    max_tokens: 1500
-  - model_id: gpt-4o-mini
-    provider: openai
-    model_name: gpt-4o-mini
-    thinking_overhead: 0
-    max_tokens: 1500
-  - model_id: gpt-4o
-    provider: openai
-    model_name: gpt-4o
-    thinking_overhead: 0
-    max_tokens: 1500
-  - model_id: claude-haiku-3-5
-    provider: anthropic
-    model_name: claude-3-5-haiku-20241022
-    thinking_overhead: 0
-    max_tokens: 1500
-  - model_id: claude-sonnet-4-5
-    provider: anthropic
-    model_name: claude-sonnet-4-5
-    thinking_overhead: 0
-    max_tokens: 1500
+openai:
+  router: gpt-4o-mini
+  synthesis: gpt-4o
 
-defaults:
+local:
   router: gemma2:2b
   synthesis: gemma4:26b
+  base_url: http://192.168.100.1:11434
+
+comparison_models:
+  - provider: anthropic
+    label: "Anthropic (Haiku router + Sonnet synthesis)"
+  - provider: openai
+    label: "OpenAI (GPT-4o-mini router + GPT-4o synthesis)"
+  - provider: local
+    label: "Local (Gemma2:2b router + Gemma4:26b synthesis)"
