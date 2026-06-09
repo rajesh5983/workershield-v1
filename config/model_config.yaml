@@ -4,6 +4,7 @@ local:
   router: gemma4:26b
   synthesis: gemma4:26b
   base_url: http://192.168.100.1:11434
+  thinking_overhead: 400  # extra tokens added to num_predict for models that use thinking tokens (e.g. Gemma 4)
 
 anthropic:
   router: claude-haiku-4-5-20251001

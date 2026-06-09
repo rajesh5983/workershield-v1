@@ -158,8 +158,9 @@ def _parse_synthesis_response(raw: str) -> dict:
         answer = answer_match.group(1).replace("\\n", "\n").replace('\\"', '"')
         return {"answer": answer, "citations": [], "confidence": "medium"}
 
-    # Final fallback: return raw text as answer
-    return {"answer": raw, "citations": [], "confidence": "low"}
+    # Final fallback: return raw text as answer; omit confidence so the
+    # chunk-based scorer in synthesis_node assigns an accurate value
+    return {"answer": raw, "citations": []}
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +194,8 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
         logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
         raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input, max_tokens=1500)
         parsed = _parse_synthesis_response(raw)
-        if parsed.get("confidence") == "low" and parsed.get("answer") == raw.strip():
-            logger.warning("[synthesis] JSON parse fell back to raw text, raw=%r", raw[:200])
+        if "confidence" not in parsed:
+            logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
     except Exception as exc:
         logger.error("[synthesis] API call failed: %s", exc)
         parsed = {

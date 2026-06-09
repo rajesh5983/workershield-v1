@@ -31,13 +31,14 @@ class LLMClient:
     Unified chat interface for Ollama (local) and Anthropic API backends.
 
     Usage:
-        llm = LLMClient(provider="local", model="gemma3", base_url="http://...")
+        llm = LLMClient(provider="local", model="gemma4:26b", base_url="http://...", thinking_overhead=400)
         text = llm.chat(system_prompt="You are...", user_message="...", max_tokens=256)
     """
 
     provider: str
     model: str
     base_url: str | None = None
+    thinking_overhead: int = 0  # extra num_predict budget for models that use internal thinking tokens
 
     def chat(self, system_prompt: str, user_message: str, max_tokens: int = 1500) -> str:
         """Send a message and return the raw text response."""
@@ -50,6 +51,7 @@ class LLMClient:
     def _chat_ollama(self, system_prompt: str, user_message: str, max_tokens: int) -> str:
         import ollama  # lazy import — not required when provider is anthropic
 
+        num_predict = max_tokens + self.thinking_overhead
         client = ollama.Client(host=self.base_url)
         response = client.chat(
             model=self.model,
@@ -57,7 +59,7 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            options={"num_predict": max_tokens},
+            options={"num_predict": num_predict},
         )
         return response.message.content
 
@@ -86,21 +88,26 @@ class ModelFactory:
         self._provider = self._config["model_provider"]
         logger.debug("ModelFactory initialised: provider=%s", self._provider)
 
+    def _local_client(self, model: str) -> LLMClient:
+        cfg = self._config["local"]
+        return LLMClient(
+            provider="local",
+            model=model,
+            base_url=cfg["base_url"],
+            thinking_overhead=cfg.get("thinking_overhead", 0),
+        )
+
     def get_router_llm(self) -> LLMClient:
         """Return the LLM client configured for the router/classifier role."""
         if self._provider == "local":
-            cfg = self._config["local"]
-            return LLMClient(provider="local", model=cfg["router"], base_url=cfg["base_url"])
-        cfg = self._config["anthropic"]
-        return LLMClient(provider="anthropic", model=cfg["router"])
+            return self._local_client(self._config["local"]["router"])
+        return LLMClient(provider="anthropic", model=self._config["anthropic"]["router"])
 
     def get_synthesis_llm(self) -> LLMClient:
         """Return the LLM client configured for the synthesis role."""
         if self._provider == "local":
-            cfg = self._config["local"]
-            return LLMClient(provider="local", model=cfg["synthesis"], base_url=cfg["base_url"])
-        cfg = self._config["anthropic"]
-        return LLMClient(provider="anthropic", model=cfg["synthesis"])
+            return self._local_client(self._config["local"]["synthesis"])
+        return LLMClient(provider="anthropic", model=self._config["anthropic"]["synthesis"])
 
     def get_comparison_llm(self, model_name: str) -> LLMClient:
         """
@@ -111,8 +118,7 @@ class ModelFactory:
         for entry in self._config.get("comparison_models", []):
             if entry["name"] == model_name:
                 if entry["provider"] == "local":
-                    base_url = self._config["local"]["base_url"]
-                    return LLMClient(provider="local", model=model_name, base_url=base_url)
+                    return self._local_client(model_name)
                 return LLMClient(provider="anthropic", model=model_name)
         raise ValueError(f"Model {model_name!r} not found in comparison_models")
 
