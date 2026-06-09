@@ -5,7 +5,7 @@ Swap router and synthesis models at runtime by passing a model_id to
 get_router_llm() / get_synthesis_llm(), or let them fall back to the
 defaults block in config/model_config.yaml.
 
-Supported providers: ollama, openai
+Supported providers: ollama, openai, anthropic
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ def get_model_config() -> dict[str, Any]:
 @dataclass
 class LLMClient:
     """
-    Unified chat interface for Ollama (local) and OpenAI API backends.
+    Unified chat interface for Ollama, OpenAI, and Anthropic backends.
 
-    provider: "ollama" | "openai"
-    model:    ollama model tag or OpenAI model name
-    base_url: Ollama host (ignored for openai)
-    thinking_overhead: extra num_predict tokens for Ollama thinking models
+    provider: "ollama" | "openai" | "anthropic"
+    model:    ollama model tag, OpenAI model name, or Anthropic model ID
+    base_url: Ollama host URL (ignored for openai/anthropic)
+    thinking_overhead: extra num_predict tokens for Ollama thinking models (0 for API providers)
     max_tokens: token budget for the visible response
     """
 
@@ -55,6 +55,8 @@ class LLMClient:
             return self._chat_ollama(system_prompt, user_message)
         if self.provider == "openai":
             return self._chat_openai(system_prompt, user_message)
+        if self.provider == "anthropic":
+            return self._chat_anthropic(system_prompt, user_message)
         raise ValueError(f"Unknown provider: {self.provider!r}")
 
     def _chat_ollama(self, system_prompt: str, user_message: str) -> str:
@@ -85,6 +87,18 @@ class LLMClient:
             ],
         )
         return response.choices[0].message.content
+
+    def _chat_anthropic(self, system_prompt: str, user_message: str) -> str:
+        import anthropic  # lazy import
+
+        client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
+        message = client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        )
+        return message.content[0].text
 
 
 class ModelFactory:
