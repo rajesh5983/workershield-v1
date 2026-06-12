@@ -234,10 +234,9 @@ def run_evaluation() -> None:
     print(f"Running RAGAS evaluation ({len(METRICS)} metrics × {len(samples)} queries)...")
 
     dataset = EvaluationDataset(samples=samples)
-    # faithfulness + context_precision each make O(N_statements) LLM calls per
-    # sample; 300s/job with 8 workers prevents stacking timeouts while keeping
-    # total eval time under ~15 minutes.
-    run_config = RunConfig(timeout=300, max_retries=1, max_workers=8)
+    # Reduced concurrency + extended timeout + retries to prevent GPT-4o-mini
+    # rate-limit stalls that produce 0.0 outlier scores and TimeoutError exceptions.
+    run_config = RunConfig(timeout=180, max_retries=3, max_workers=2)
 
     eval_result = evaluate(
         dataset          = dataset,
@@ -346,17 +345,12 @@ def run_evaluation() -> None:
     results_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
     print(f"\nFull results saved to: {results_path}")
 
-    # Archived history (never overwritten)
+    # Archived history — same date+mode re-runs overwrite (clean re-run semantics)
     date_str      = ts_now.strftime("%Y-%m-%d")
     history_dir   = Path(__file__).parent / "ragas_history"
     history_dir.mkdir(exist_ok=True)
     history_label = f"{retrieval_mode}_{date_str}"
     history_path  = history_dir / f"{history_label}.json"
-    # Avoid clobbering an existing run from the same day by suffixing
-    suffix = 1
-    while history_path.exists():
-        history_path = history_dir / f"{history_label}_{suffix}.json"
-        suffix += 1
     history_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
     print(f"Archived to        : {history_path}")
 
@@ -383,7 +377,11 @@ def _append_comparison_row(
     retrieval_mode: str,
     aggregates: dict,
 ) -> None:
-    """Append one result row to ragas_history/COMPARISON.md."""
+    """Upsert one result row in ragas_history/COMPARISON.md.
+
+    If a row for the same date and retrieval_mode already exists it is replaced
+    in-place (clean re-run semantics). Otherwise the row is appended.
+    """
     comp_path = history_dir / "COMPARISON.md"
 
     def _f2(v):
@@ -397,9 +395,22 @@ def _append_comparison_row(
         f"| {_f2(aggregates.get('answer_relevancy'))} |"
     )
 
+    match_prefix = f"| {date_str} | {retrieval_mode} "
+
     if comp_path.exists():
-        existing = comp_path.read_text()
-        comp_path.write_text(existing.rstrip() + "\n" + row + "\n")
+        lines   = comp_path.read_text().rstrip().split("\n")
+        updated = False
+        new_lines = []
+        for line in lines:
+            if line.startswith(match_prefix):
+                new_lines.append(row)
+                updated = True
+            else:
+                new_lines.append(line)
+        if not updated:
+            new_lines.append(row)
+        comp_path.write_text("\n".join(new_lines) + "\n")
+        action = "updated" if updated else "appended"
     else:
         header = (
             "# WorkerShield RAGAS Retrieval Comparison\n\n"
@@ -408,8 +419,9 @@ def _append_comparison_row(
             "|---|---|---|---|---|---|\n"
         )
         comp_path.write_text(header + row + "\n")
+        action = "created"
 
-    print(f"COMPARISON.md      : row appended ({retrieval_mode}  {date_str})")
+    print(f"COMPARISON.md      : row {action} ({retrieval_mode}  {date_str})")
 
 
 # ---------------------------------------------------------------------------

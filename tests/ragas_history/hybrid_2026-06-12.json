@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-12T13:57:45.626512+00:00",
+  "timestamp": "2026-06-12T14:19:55.751620+00:00",
   "model_provider": "anthropic",
   "router_model": "claude-haiku-4-5-20251001",
   "synthesis_model": "claude-sonnet-4-6",
@@ -12,7 +12,7 @@
     "context_recall",
     "answer_relevancy"
   ],
-  "total_time_seconds": 955.1,
+  "total_time_seconds": 1049.9,
   "per_query": [
     {
       "query_num": 1,
@@ -22,8 +22,8 @@
         "healthnav"
       ],
       "detected_domains": [
-        "fairdesk",
-        "healthnav"
+        "healthnav",
+        "fairdesk"
       ],
       "expected_doc_ids": [
         "HN01",
@@ -32,8 +32,8 @@
       "answer_excerpt": "I don't have enough information in my source documents to answer this confidently. This question may be outside the scope of the WHS, Fair Work, and occupational health documents WorkerShield currentl",
       "context_count": 6,
       "scores": {
-        "faithfulness": 0.4,
-        "context_precision": null,
+        "faithfulness": 0.2,
+        "context_precision": 0.9667,
         "context_recall": 1.0,
         "answer_relevancy": 0.0
       }
@@ -51,10 +51,10 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nBased on the provided source documents, there is **limited specific detail** about casual employee *overtime* rates on public holidays. However, the fol",
+      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nThe rules around casual employee overtime on public holidays involve several intersecting considerations under the National Employment Standards (NES). ",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.95,
+        "faithfulness": 0.9091,
         "context_precision": 1.0,
         "context_recall": 0.0,
         "answer_relevancy": 0.0
@@ -75,13 +75,13 @@
         "HN01",
         "SS03b"
       ],
-      "answer_excerpt": "## Psychosocial Hazards Under WHS Law\n\n### Who Bears the Duty?\n\nUnder the WHS laws, **'health' is explicitly defined to include psychological as well as physical health** [HN01]. This means psychosoci",
+      "answer_excerpt": "## Psychosocial Hazards Under WHS Law\n\n### Who Has Duties?\n\nUnder the WHS laws, **multiple duty holders** are responsible for managing psychosocial hazards [HN01]:\n\n- **PCBU (Person Conducting a Busin",
       "context_count": 6,
       "scores": {
-        "faithfulness": null,
-        "context_precision": null,
+        "faithfulness": 0.9429,
+        "context_precision": 0.6917,
         "context_recall": 1.0,
-        "answer_relevancy": 0.7597
+        "answer_relevancy": 0.8337
       }
     },
     {
@@ -98,13 +98,13 @@
       "expected_doc_ids": [
         "HN03"
       ],
-      "answer_excerpt": "## Return to Work (RTW) Obligations When a Worker Is Injured\n\nWhen a worker is injured, you have obligations spanning **workers' compensation law**, **WHS law**, and **Fair Work entitlements**. Below ",
+      "answer_excerpt": "## Obligations When a Worker Is Injured and Needs to Return to Work\n\nWhen a worker is injured and requires a return to work (RTW), you have obligations spanning workers' compensation law, workplace he",
       "context_count": 9,
       "scores": {
         "faithfulness": 1.0,
-        "context_precision": null,
+        "context_precision": 0.4013,
         "context_recall": 1.0,
-        "answer_relevancy": 0.8446
+        "answer_relevancy": 0.9587
       }
     },
     {
@@ -142,13 +142,13 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## Casual Employee Entitlements Under the NES\n\nUnder the National Employment Standards (NES), casual employees have access to a specific subset of entitlements. These are outlined below.\n\n### Entitlem",
+      "answer_excerpt": "## Casual Employee Entitlements Under the NES\n\nUnder the **National Employment Standards (NES)**, casual employees have access to a specific subset of entitlements. Not all NES entitlements apply to c",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.9333,
+        "faithfulness": 0.9048,
         "context_precision": 0.8333,
         "context_recall": 1.0,
-        "answer_relevancy": 0.9247
+        "answer_relevancy": 0.8405
       }
     },
     {
@@ -164,13 +164,13 @@
         "SS03a",
         "SS03b"
       ],
-      "answer_excerpt": "## Worker's Duty to Take Reasonable Care Under the WHS Act\n\nUnder the **Queensland Work Health and Safety Act 2011**, section 28 sets out the specific duties of workers while at work. These duties are",
+      "answer_excerpt": "## Worker's Duty to Take Reasonable Care under the WHS Act\n\nUnder the **Queensland Work Health and Safety Act 2011**, section 28 sets out the specific duties of workers while at work [SS03a].\n\n### The",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.5833,
+        "faithfulness": 0.5455,
         "context_precision": 1.0,
         "context_recall": 1.0,
-        "answer_relevancy": 0.622
+        "answer_relevancy": 0.6257
       }
     },
     {
@@ -186,20 +186,20 @@
       "expected_doc_ids": [
         "HN02"
       ],
-      "answer_excerpt": "## How Fatigue Affects Workplace Safety\n\n### What is Fatigue?\n\nFatigue is more than simply feeling sleepy, tired or drowsy — it is a state of impairment that can be physical, mental, emotional, or a c",
+      "answer_excerpt": "## How Fatigue Affects Workplace Safety\n\n### What is Fatigue?\n\nFatigue is more than feeling sleepy, tired or drowsy — it is a state of impairment that **harms your health and reduces your ability to w",
       "context_count": 6,
       "scores": {
         "faithfulness": 1.0,
         "context_precision": 1.0,
         "context_recall": 1.0,
-        "answer_relevancy": 0.9452
+        "answer_relevancy": 0.9421
       }
     }
   ],
   "aggregates": {
-    "faithfulness": 0.6952,
-    "context_precision": 0.8333,
+    "faithfulness": 0.6878,
+    "context_precision": 0.7783,
     "context_recall": 0.875,
-    "answer_relevancy": 0.512
+    "answer_relevancy": 0.5251
   }
 }
