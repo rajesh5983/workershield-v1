@@ -1,11 +1,17 @@
 """
-WorkerShield ingest orchestrator.
+WorkerShield ingest orchestrator — hybrid dense + sparse (BM25) vectors.
 
 For each document in docs/corpus_registry.yaml:
   1. Extract text page-by-page via pypdf
   2. Chunk with the strategy registered for that doc_id
-  3. Embed each chunk via Ollama nomic-embed-text
-  4. Upsert to Qdrant collection 'workershield'
+  3. Embed each chunk:
+       dense  — Ollama nomic-embed-text (768d)
+       sparse — fastembed Qdrant/bm25 (BM25 term-frequency for Qdrant IDF modifier)
+  4. Upsert to Qdrant collection 'workershield' with named vectors
+
+Collection schema (named vectors):
+  "text-dense"  : VectorParams(size=768, distance=Cosine)
+  "text-sparse" : SparseVectorParams(modifier=IDF)
 
 Environment variables:
   OLLAMA_HOST   — Ollama base URL (default: http://192.168.100.1:11434)
@@ -23,9 +29,17 @@ from typing import Any
 import requests
 import yaml
 from dotenv import load_dotenv
+from fastembed import SparseTextEmbedding
 from pypdf import PdfReader
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    Modifier,
+    PointStruct,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 from tqdm import tqdm
 
 from ingest.chunk_strategy import get_chunker
@@ -36,13 +50,28 @@ load_dotenv()
 # Configuration
 # ---------------------------------------------------------------------------
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://192.168.100.1:11434")
-QDRANT_HOST = os.environ.get("QDRANT_HOST", "http://localhost:6333")
-COLLECTION = "workershield"
-EMBED_MODEL = "nomic-embed-text"
-VECTOR_SIZE = 768
-CORPUS_DIR = Path(__file__).resolve().parents[1] / "corpus" / "raw"
-REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs" / "corpus_registry.yaml"
+OLLAMA_HOST    = os.environ.get("OLLAMA_HOST", "http://192.168.100.1:11434")
+QDRANT_HOST    = os.environ.get("QDRANT_HOST", "http://localhost:6333")
+COLLECTION     = "workershield"
+EMBED_MODEL    = "nomic-embed-text"
+VECTOR_SIZE    = 768
+CORPUS_DIR     = Path(__file__).resolve().parents[1] / "corpus" / "raw"
+REGISTRY_PATH  = Path(__file__).resolve().parents[1] / "docs" / "corpus_registry.yaml"
+
+# ---------------------------------------------------------------------------
+# Sparse encoder — initialised once per process
+# ---------------------------------------------------------------------------
+
+_sparse_encoder: SparseTextEmbedding | None = None
+
+
+def _get_sparse_encoder() -> SparseTextEmbedding:
+    global _sparse_encoder
+    if _sparse_encoder is None:
+        print("  Initialising BM25 sparse encoder (fastembed Qdrant/bm25)…")
+        _sparse_encoder = SparseTextEmbedding(model_name="Qdrant/bm25")
+    return _sparse_encoder
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,8 +92,8 @@ def _extract_text_by_page(pdf_path: Path) -> list[str]:
 _MAX_EMBED_CHARS = 6_000  # ~1 500 tokens — safe headroom under nomic-embed-text's 8 192-token limit
 
 
-def _embed(text: str) -> list[float]:
-    """Call Ollama embeddings endpoint and return the vector."""
+def _embed_dense(text: str) -> list[float]:
+    """Call Ollama embeddings endpoint and return the dense vector."""
     if len(text) > _MAX_EMBED_CHARS:
         text = text[:_MAX_EMBED_CHARS]
     resp = requests.post(
@@ -77,15 +106,34 @@ def _embed(text: str) -> list[float]:
 
 
 def _ensure_collection(client: QdrantClient) -> None:
+    """Ensure the collection exists with named dense + sparse vector config.
+
+    If an old unnamed-vector collection exists it is deleted and recreated —
+    the hybrid schema requires named vectors.
+    """
     existing = {c.name for c in client.get_collections().collections}
-    if COLLECTION not in existing:
-        client.create_collection(
-            collection_name=COLLECTION,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
-        print(f"  Created collection '{COLLECTION}'")
-    else:
-        print(f"  Collection '{COLLECTION}' already exists")
+    if COLLECTION in existing:
+        info   = client.get_collection(COLLECTION)
+        config = info.config.params
+        # Old schema: vectors is a single VectorParams, not a name→params dict
+        if not isinstance(config.vectors, dict):
+            print(f"  Old unnamed-vector schema detected — deleting '{COLLECTION}' for recreation…")
+            client.delete_collection(COLLECTION)
+        else:
+            print(f"  Collection '{COLLECTION}' already has named-vector schema — skipping recreate")
+            return
+
+    client.create_collection(
+        collection_name=COLLECTION,
+        vectors_config={
+            "text-dense": VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        },
+        sparse_vectors_config={
+            # Qdrant computes corpus-level IDF from the stored TF vectors at query time
+            "text-sparse": SparseVectorParams(modifier=Modifier.IDF),
+        },
+    )
+    print(f"  Created '{COLLECTION}': text-dense (768d cosine) + text-sparse (BM25/IDF)")
 
 
 def _upsert_batch(client: QdrantClient, points: list[PointStruct]) -> None:
@@ -99,11 +147,11 @@ def _upsert_batch(client: QdrantClient, points: list[PointStruct]) -> None:
 
 def ingest_document(doc: dict, client: QdrantClient) -> dict[str, Any]:
     """Ingest one document. Returns a result dict for the summary table."""
-    doc_id = doc["id"]
-    domain = doc["domain"]
-    title = doc["title"]
-    source = doc["source"]
-    filename = doc["filename"]
+    doc_id      = doc["id"]
+    domain      = doc["domain"]
+    title       = doc["title"]
+    source      = doc["source"]
+    filename    = doc["filename"]
     total_pages = doc.get("pages", 1)
 
     pdf_path = CORPUS_DIR / filename
@@ -111,35 +159,48 @@ def ingest_document(doc: dict, client: QdrantClient) -> dict[str, Any]:
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     # --- Extract ---
-    pages = _extract_text_by_page(pdf_path)
+    pages     = _extract_text_by_page(pdf_path)
     full_text = "\n".join(pages)
 
     # --- Chunk ---
     chunker = get_chunker(doc_id)
-    meta = {"pages": total_pages}
-    chunks = chunker(full_text, meta)
+    meta    = {"pages": total_pages}
+    chunks  = chunker(full_text, meta)
 
     if not chunks:
         raise ValueError(f"No chunks produced for {doc_id}")
 
-    # --- Embed & upsert ---
+    # --- Batch sparse-embed all chunk texts at once ---
+    encoder       = _get_sparse_encoder()
+    texts         = [c["text"][:_MAX_EMBED_CHARS] for c in chunks]
+    sparse_embeds = list(encoder.embed(texts))
+
+    # --- Dense embed + upsert ---
     points: list[PointStruct] = []
-    bar = tqdm(chunks, desc=f"  {doc_id}", unit="chunk", leave=False)
-    for chunk in bar:
-        vector = _embed(chunk["text"])
+    bar = tqdm(zip(chunks, sparse_embeds), total=len(chunks),
+               desc=f"  {doc_id}", unit="chunk", leave=False)
+
+    for chunk, sparse in bar:
+        dense = _embed_dense(chunk["text"])
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
-                vector=vector,
+                vector={
+                    "text-dense":  dense,
+                    "text-sparse": SparseVector(
+                        indices=sparse.indices.tolist(),
+                        values=sparse.values.tolist(),
+                    ),
+                },
                 payload={
-                    "doc_id": doc_id,
-                    "domain": domain,
-                    "title": title,
-                    "source": source,
-                    "chunk_type": chunk["chunk_type"],
-                    "section": chunk.get("section", ""),
+                    "doc_id":       doc_id,
+                    "domain":       domain,
+                    "title":        title,
+                    "source":       source,
+                    "chunk_type":   chunk["chunk_type"],
+                    "section":      chunk.get("section", ""),
                     "page_estimate": chunk.get("page_estimate", 1),
-                    "text": chunk["text"],
+                    "text":         chunk["text"],
                 },
             )
         )
@@ -156,11 +217,12 @@ def ingest_document(doc: dict, client: QdrantClient) -> dict[str, Any]:
 
 def run_ingest() -> None:
     registry = _load_registry()
-    client = QdrantClient(url=QDRANT_HOST)
+    client   = QdrantClient(url=QDRANT_HOST)
 
     print(f"\nOllama : {OLLAMA_HOST}")
     print(f"Qdrant : {QDRANT_HOST}")
-    print(f"Corpus : {CORPUS_DIR}\n")
+    print(f"Corpus : {CORPUS_DIR}")
+    print(f"Docs   : {len(registry)}\n")
 
     _ensure_collection(client)
     print()
@@ -176,10 +238,10 @@ def run_ingest() -> None:
             print(f"  ✓ {result['chunks_created']} chunks upserted\n")
         except Exception as exc:
             results.append({
-                "doc_id": doc_id,
-                "domain": doc.get("domain", ""),
+                "doc_id":         doc_id,
+                "domain":         doc.get("domain", ""),
                 "chunks_created": 0,
-                "status": f"ERROR: {exc}",
+                "status":         f"ERROR: {exc}",
             })
             print(f"  ✗ {exc}\n", file=sys.stderr)
 

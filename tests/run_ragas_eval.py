@@ -323,12 +323,16 @@ def run_evaluation() -> None:
           f"({(t_graph_done - t_start):.1f}s graph + "
           f"{(t_eval_done - t_graph_done):.1f}s RAGAS eval)")
 
+    retrieval_mode = cfg.get("retrieval_mode", "dense_only")
+
     # ── Save JSON results ─────────────────────────────────────────────────────
+    ts_now = datetime.now(timezone.utc)
     output = {
-        "timestamp":          datetime.now(timezone.utc).isoformat(),
+        "timestamp":          ts_now.isoformat(),
         "model_provider":     model_provider,
         "router_model":       router_model,
         "synthesis_model":    synth_model,
+        "retrieval_mode":     retrieval_mode,
         "judge_llm":          "gpt-4o-mini (OpenAI)",
         "judge_embeddings":   "text-embedding-3-small (OpenAI)",
         "metrics":            METRIC_KEYS,
@@ -337,17 +341,75 @@ def run_evaluation() -> None:
         "aggregates":         aggregates,
     }
 
+    # Latest (always overwritten)
     results_path = Path(__file__).parent / "ragas_results.json"
     results_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
     print(f"\nFull results saved to: {results_path}")
+
+    # Archived history (never overwritten)
+    date_str      = ts_now.strftime("%Y-%m-%d")
+    history_dir   = Path(__file__).parent / "ragas_history"
+    history_dir.mkdir(exist_ok=True)
+    history_label = f"{retrieval_mode}_{date_str}"
+    history_path  = history_dir / f"{history_label}.json"
+    # Avoid clobbering an existing run from the same day by suffixing
+    suffix = 1
+    while history_path.exists():
+        history_path = history_dir / f"{history_label}_{suffix}.json"
+        suffix += 1
+    history_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
+    print(f"Archived to        : {history_path}")
+
+    # Append row to COMPARISON.md
+    _append_comparison_row(history_dir, date_str, retrieval_mode, aggregates)
 
     # ── Generate RAGAS_RESULTS.md ─────────────────────────────────────────────
     _write_markdown(output, per_query, aggregates, total_time)
 
     print(f"\nActive app provider : {model_provider}  "
           f"(router={router_model}, synthesis={synth_model})")
+    print(f"Retrieval mode     : {retrieval_mode}")
     print(f"RAGAS judge        : gpt-4o-mini + text-embedding-3-small")
     print("Evaluation complete.\n")
+
+
+# ---------------------------------------------------------------------------
+# COMPARISON.md updater
+# ---------------------------------------------------------------------------
+
+def _append_comparison_row(
+    history_dir: "Path",
+    date_str: str,
+    retrieval_mode: str,
+    aggregates: dict,
+) -> None:
+    """Append one result row to ragas_history/COMPARISON.md."""
+    comp_path = history_dir / "COMPARISON.md"
+
+    def _f2(v):
+        return f"{v:.4f}" if v is not None else "N/A"
+
+    row = (
+        f"| {date_str} | {retrieval_mode} "
+        f"| {_f2(aggregates.get('faithfulness'))} "
+        f"| {_f2(aggregates.get('context_precision'))} "
+        f"| {_f2(aggregates.get('context_recall'))} "
+        f"| {_f2(aggregates.get('answer_relevancy'))} |"
+    )
+
+    if comp_path.exists():
+        existing = comp_path.read_text()
+        comp_path.write_text(existing.rstrip() + "\n" + row + "\n")
+    else:
+        header = (
+            "# WorkerShield RAGAS Retrieval Comparison\n\n"
+            "Results across retrieval configurations. Each row is one eval run.\n\n"
+            "| Date | Config | Faithfulness | Context Precision | Context Recall | Answer Relevancy |\n"
+            "|---|---|---|---|---|---|\n"
+        )
+        comp_path.write_text(header + row + "\n")
+
+    print(f"COMPARISON.md      : row appended ({retrieval_mode}  {date_str})")
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +425,11 @@ def _write_markdown(output: dict, per_query: list, aggregates: dict, total_time:
             return " ⚠"
         return " ← low" if v < 0.5 else ""
 
-    ts   = output["timestamp"]
-    prov = output["model_provider"]
-    rmod = output["router_model"]
-    smod = output["synthesis_model"]
+    ts      = output["timestamp"]
+    prov    = output["model_provider"]
+    rmod    = output["router_model"]
+    smod    = output["synthesis_model"]
+    ret_mode = output.get("retrieval_mode", "dense_only")
 
     rows = []
     for q in per_query:
@@ -402,6 +465,7 @@ def _write_markdown(output: dict, per_query: list, aggregates: dict, total_time:
 |---|---|---|
 | App router | `{prov}` | `{rmod}` |
 | App synthesis | `{prov}` | `{smod}` |
+| Retrieval mode | — | `{ret_mode}` |
 | RAGAS judge LLM | OpenAI | `gpt-4o-mini` |
 | RAGAS judge embeddings | OpenAI | `text-embedding-3-small` |
 

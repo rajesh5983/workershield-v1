@@ -1,9 +1,8 @@
 {
-  "timestamp": "2026-06-12T13:57:45.626512+00:00",
+  "timestamp": "2026-06-12T12:15:40.892747+00:00",
   "model_provider": "anthropic",
   "router_model": "claude-haiku-4-5-20251001",
   "synthesis_model": "claude-sonnet-4-6",
-  "retrieval_mode": "hybrid",
   "judge_llm": "gpt-4o-mini (OpenAI)",
   "judge_embeddings": "text-embedding-3-small (OpenAI)",
   "metrics": [
@@ -12,7 +11,7 @@
     "context_recall",
     "answer_relevancy"
   ],
-  "total_time_seconds": 955.1,
+  "total_time_seconds": 1013.7,
   "per_query": [
     {
       "query_num": 1,
@@ -22,20 +21,20 @@
         "healthnav"
       ],
       "detected_domains": [
-        "fairdesk",
-        "healthnav"
+        "healthnav",
+        "fairdesk"
       ],
       "expected_doc_ids": [
         "HN01",
         "FD03"
       ],
-      "answer_excerpt": "I don't have enough information in my source documents to answer this confidently. This question may be outside the scope of the WHS, Fair Work, and occupational health documents WorkerShield currentl",
+      "answer_excerpt": "{\n  \"answer\": \"## Obligations When a FIFO Worker with a Mental Health Condition Requests Reduced Hours\\n\\nThis situation engages obligations across both Work Health and Safety (WHS) law and the Fair W",
       "context_count": 6,
       "scores": {
-        "faithfulness": 0.4,
+        "faithfulness": 0.9,
         "context_precision": null,
         "context_recall": 1.0,
-        "answer_relevancy": 0.0
+        "answer_relevancy": 0.939
       }
     },
     {
@@ -51,11 +50,11 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nBased on the provided source documents, there is **limited specific detail** about casual employee *overtime* rates on public holidays. However, the fol",
+      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nBased on the provided source documents, there is **no specific information about overtime rates for casual employees on public holidays**. However, the ",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.95,
-        "context_precision": 1.0,
+        "faithfulness": 1.0,
+        "context_precision": null,
         "context_recall": 0.0,
         "answer_relevancy": 0.0
       }
@@ -75,13 +74,13 @@
         "HN01",
         "SS03b"
       ],
-      "answer_excerpt": "## Psychosocial Hazards Under WHS Law\n\n### Who Bears the Duty?\n\nUnder the WHS laws, **'health' is explicitly defined to include psychological as well as physical health** [HN01]. This means psychosoci",
+      "answer_excerpt": "## Psychosocial Hazards You Must Manage Under WHS Law\n\n### Legal Duty\n\nUnder WHS laws, a **PCBU has the primary duty** to ensure, so far as is reasonably practicable, that workers and other people are",
       "context_count": 6,
       "scores": {
-        "faithfulness": null,
+        "faithfulness": 1.0,
         "context_precision": null,
         "context_recall": 1.0,
-        "answer_relevancy": 0.7597
+        "answer_relevancy": 0.7949
       }
     },
     {
@@ -98,13 +97,13 @@
       "expected_doc_ids": [
         "HN03"
       ],
-      "answer_excerpt": "## Return to Work (RTW) Obligations When a Worker Is Injured\n\nWhen a worker is injured, you have obligations spanning **workers' compensation law**, **WHS law**, and **Fair Work entitlements**. Below ",
+      "answer_excerpt": "{\n  \"answer\": \"## Return-to-Work (RTW) Obligations When a Worker is Injured\\n\\nWhen a worker is injured and needs to return to work, you have obligations across workers' compensation law, WHS law, and",
       "context_count": 9,
       "scores": {
         "faithfulness": 1.0,
         "context_precision": null,
         "context_recall": 1.0,
-        "answer_relevancy": 0.8446
+        "answer_relevancy": 0.9561
       }
     },
     {
@@ -120,12 +119,12 @@
         "SS01",
         "SS02"
       ],
-      "answer_excerpt": "I don't have enough information in my source documents to answer this confidently. This question may be outside the scope of the WHS, Fair Work, and occupational health documents WorkerShield currentl",
+      "answer_excerpt": "Based on the source documents provided, there is insufficient information to give a complete answer about what a Code of Practice is under WHS legislation.\n\nThe chunks retrieved from the SafeShift dom",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.0,
-        "context_precision": 0.3333,
-        "context_recall": 1.0,
+        "faithfulness": 0.25,
+        "context_precision": 0.0,
+        "context_recall": 0.0,
         "answer_relevancy": 0.0
       }
     },
@@ -142,13 +141,13 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## Casual Employee Entitlements Under the NES\n\nUnder the National Employment Standards (NES), casual employees have access to a specific subset of entitlements. These are outlined below.\n\n### Entitlem",
+      "answer_excerpt": "## NES Entitlements for Casual Employees\n\nUnder the **National Employment Standards (NES)**, casual employees have access to a specific set of entitlements. These are outlined below.\n\n---\n\n### Entitle",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.9333,
-        "context_precision": 0.8333,
+        "faithfulness": 1.0,
+        "context_precision": 1.0,
         "context_recall": 1.0,
-        "answer_relevancy": 0.9247
+        "answer_relevancy": 0.8525
       }
     },
     {
@@ -164,10 +163,10 @@
         "SS03a",
         "SS03b"
       ],
-      "answer_excerpt": "## Worker's Duty to Take Reasonable Care Under the WHS Act\n\nUnder the **Queensland Work Health and Safety Act 2011**, section 28 sets out the specific duties of workers while at work. These duties are",
+      "answer_excerpt": "## Worker's Duty to Take Reasonable Care under the WHS Act\n\nUnder the **Queensland Work Health and Safety Act 2011**, section 28 sets out the specific duties of workers while at work [SS03a].\n\n### Sec",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.5833,
+        "faithfulness": 1.0,
         "context_precision": 1.0,
         "context_recall": 1.0,
         "answer_relevancy": 0.622
@@ -186,7 +185,7 @@
       "expected_doc_ids": [
         "HN02"
       ],
-      "answer_excerpt": "## How Fatigue Affects Workplace Safety\n\n### What is Fatigue?\n\nFatigue is more than simply feeling sleepy, tired or drowsy — it is a state of impairment that can be physical, mental, emotional, or a c",
+      "answer_excerpt": "{\n  \"answer\": \"## How Fatigue Affects Workplace Safety\\n\\n### What Is Fatigue?\\n\\nFatigue is more than simply feeling sleepy or tired. According to Safe Work Australia, fatigue is **a state of impairm",
       "context_count": 6,
       "scores": {
         "faithfulness": 1.0,
@@ -197,9 +196,9 @@
     }
   ],
   "aggregates": {
-    "faithfulness": 0.6952,
-    "context_precision": 0.8333,
-    "context_recall": 0.875,
-    "answer_relevancy": 0.512
+    "faithfulness": 0.8938,
+    "context_precision": 0.75,
+    "context_recall": 0.75,
+    "answer_relevancy": 0.6387
   }
 }

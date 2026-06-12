@@ -4,6 +4,7 @@ langgraph
 langchain
 langchain-text-splitters
 qdrant-client
+fastembed
 pypdf
 gradio
 pyyaml

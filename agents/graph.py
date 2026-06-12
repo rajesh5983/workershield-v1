@@ -19,16 +19,20 @@ from typing import Annotated, Any
 
 import requests
 from dotenv import load_dotenv
+from fastembed import SparseTextEmbedding
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from opentelemetry import trace as _otel_trace
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import (
+    FieldCondition, Filter, Fusion, MatchValue, Prefetch, SparseVector,
+)
 from typing_extensions import TypedDict
 
 from agents.router import router_node as _router_node
 from agents.synthesis import synthesis_node as _synthesis_node
 from observability.phoenix_setup import setup_phoenix
+from utils.model_factory import get_model_config
 
 load_dotenv()
 
@@ -45,11 +49,45 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://192.168.100.1:11434")
-QDRANT_HOST = os.environ.get("QDRANT_HOST", "http://localhost:6333")
+_qdrant_host_raw = os.environ.get("QDRANT_HOST", "http://localhost:6333")
+QDRANT_HOST = _qdrant_host_raw if "://" in _qdrant_host_raw else f"http://{_qdrant_host_raw}:6333"
 COLLECTION  = "workershield"
 EMBED_MODEL = "nomic-embed-text"
 MAX_CHARS   = 6_000
 TOP_K       = 3
+
+# Prefetch multiplier for hybrid RRF — wider candidate pool before fusion
+_HYBRID_PREFETCH_K = TOP_K * 5
+
+# Read retrieval mode from config; re-read on each module load so a config
+# change takes effect on the next Python invocation without code edits.
+_RETRIEVAL_MODE: str = get_model_config().get("retrieval_mode", "dense_only")
+logger.info("[graph] retrieval_mode=%s", _RETRIEVAL_MODE)
+
+# ---------------------------------------------------------------------------
+# Sparse encoder — lazy singleton (fastembed Qdrant/bm25)
+# ---------------------------------------------------------------------------
+
+_sparse_encoder: SparseTextEmbedding | None = None
+
+
+def _get_sparse_encoder() -> SparseTextEmbedding:
+    global _sparse_encoder
+    if _sparse_encoder is None:
+        logger.info("[graph] initialising BM25 sparse encoder")
+        _sparse_encoder = SparseTextEmbedding(model_name="Qdrant/bm25")
+    return _sparse_encoder
+
+
+def _sparse_embed(text: str) -> SparseVector:
+    """Return a Qdrant SparseVector for text using fastembed BM25."""
+    enc    = _get_sparse_encoder()
+    result = next(enc.embed([text[:MAX_CHARS]]))
+    return SparseVector(
+        indices=result.indices.tolist(),
+        values=result.values.tolist(),
+    )
+
 
 # ---------------------------------------------------------------------------
 # State
@@ -86,17 +124,8 @@ def _embed(text: str) -> list[float]:
     return r.json()["embedding"]
 
 
-def _query_qdrant(vec: list[float], domain: str, client: QdrantClient) -> list[dict]:
-    """Run a domain-filtered Qdrant search and return chunk dicts."""
-    hits = client.query_points(
-        collection_name=COLLECTION,
-        query=vec,
-        query_filter=Filter(
-            must=[FieldCondition(key="domain", match=MatchValue(value=domain))]
-        ),
-        limit=TOP_K,
-        with_payload=True,
-    ).points
+def _hits_to_chunks(hits: list) -> list[dict]:
+    """Convert raw Qdrant ScoredPoint objects to chunk dicts."""
     chunks = []
     for h in hits:
         p = h.payload
@@ -113,11 +142,95 @@ def _query_qdrant(vec: list[float], domain: str, client: QdrantClient) -> list[d
     return chunks
 
 
+def _query_qdrant_dense(vec: list[float], domain: str, client: QdrantClient) -> list[dict]:
+    """Dense-only retrieval via qdrant-client (named vector 'text-dense')."""
+    domain_filter = Filter(
+        must=[FieldCondition(key="domain", match=MatchValue(value=domain))]
+    )
+    hits = client.query_points(
+        collection_name=COLLECTION,
+        query=vec,
+        using="text-dense",
+        query_filter=domain_filter,
+        limit=TOP_K,
+        with_payload=True,
+    ).points
+    return _hits_to_chunks(hits)
+
+
+def _query_qdrant_hybrid_full(
+    dense_vec: list[float],
+    sparse_vec: SparseVector,
+    domain: str,
+) -> list[dict]:
+    """Hybrid RRF retrieval via direct REST call.
+
+    qdrant-client 1.18.0 has a serialisation bug with query=Fusion.RRF in
+    query_points; the raw REST endpoint accepts the exact same payload correctly.
+    """
+    domain_filter = {"must": [{"key": "domain", "match": {"value": domain}}]}
+    payload = {
+        "prefetch": [
+            {
+                "query":  dense_vec,
+                "using":  "text-dense",
+                "limit":  _HYBRID_PREFETCH_K,
+                "filter": domain_filter,
+            },
+            {
+                "query":  {"indices": sparse_vec.indices, "values": sparse_vec.values},
+                "using":  "text-sparse",
+                "limit":  _HYBRID_PREFETCH_K,
+                "filter": domain_filter,
+            },
+        ],
+        "query":        {"fusion": "rrf"},
+        "limit":        TOP_K,
+        "with_payload": True,
+    }
+    resp = requests.post(
+        f"{QDRANT_HOST}/collections/{COLLECTION}/points/query",
+        json=payload,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    pts = resp.json()["result"]["points"]
+    return [
+        {
+            "doc_id":  p["payload"].get("doc_id", ""),
+            "domain":  p["payload"].get("domain", ""),
+            "title":   p["payload"].get("title", ""),
+            "source":  p["payload"].get("source", ""),
+            "section": p["payload"].get("section", ""),
+            "page":    p["payload"].get("page_estimate", 1),
+            "score":   round(p["score"], 4),
+            "text":    p["payload"].get("text", ""),
+        }
+        for p in pts
+    ]
+
+
+def _query_qdrant(vec: list[float], domain: str, client: QdrantClient) -> list[dict]:
+    """Route to dense-only retrieval (named vector path)."""
+    return _query_qdrant_dense(vec, domain, client)
+
+
 def _retrieve(query: str, domain: str, client: QdrantClient) -> list[dict]:
-    """Embed query, query Qdrant filtered to domain, return top-K payloads."""
-    vec    = _embed(query)
-    chunks = _query_qdrant(vec, domain, client)
-    logger.info("[%s] retrieved %d chunks: %s", domain, len(chunks),
+    """Embed query (dense + optional sparse), query Qdrant, return top-K chunks."""
+    dense_vec = _embed(query)
+
+    if _RETRIEVAL_MODE == "hybrid":
+        try:
+            sparse_vec = _sparse_embed(query)
+            chunks     = _query_qdrant_hybrid_full(dense_vec, sparse_vec, domain)
+        except Exception as exc:
+            logger.warning("[%s] hybrid retrieval failed (%s) — falling back to dense", domain, exc)
+            chunks = _query_qdrant_dense(dense_vec, domain, client)
+    else:
+        chunks = _query_qdrant_dense(dense_vec, domain, client)
+
+    logger.info("[%s] retrieved %d chunks  mode=%s: %s",
+                domain, len(chunks), _RETRIEVAL_MODE,
                 list(zip([c["doc_id"] for c in chunks],
                          [c["section"][:40] for c in chunks])))
     return chunks
@@ -127,19 +240,33 @@ def _retrieve_traced(query: str, domain: str, client: QdrantClient) -> list[dict
     """Like _retrieve but wrapped in a custom OTEL span with timing attributes."""
     with _retrieval_tracer.start_as_current_span("qdrant.retrieve") as span:
         span.set_attribute("workershield.domain", domain)
+        span.set_attribute("workershield.retrieval_mode", _RETRIEVAL_MODE)
 
-        t0 = time.monotonic()
-        vec = _embed(query)
-        embed_ms = round((time.monotonic() - t0) * 1000, 1)
+        t0        = time.monotonic()
+        dense_vec = _embed(query)
+        embed_ms  = round((time.monotonic() - t0) * 1000, 1)
         span.set_attribute("workershield.embedding_time_ms", embed_ms)
 
-        chunks = _query_qdrant(vec, domain, client)
+        if _RETRIEVAL_MODE == "hybrid":
+            try:
+                t1         = time.monotonic()
+                sparse_vec = _sparse_embed(query)
+                sparse_ms  = round((time.monotonic() - t1) * 1000, 1)
+                span.set_attribute("workershield.sparse_embed_ms", sparse_ms)
+                chunks     = _query_qdrant_hybrid_full(dense_vec, sparse_vec, domain)
+                span.set_attribute("workershield.fusion", "RRF")
+            except Exception as exc:
+                logger.warning("[%s] hybrid retrieval failed (%s) — falling back to dense", domain, exc)
+                chunks = _query_qdrant_dense(dense_vec, domain, client)
+        else:
+            chunks = _query_qdrant_dense(dense_vec, domain, client)
+
         span.set_attribute("workershield.chunks_retrieved", len(chunks))
         if chunks:
             span.set_attribute("workershield.top_chunk_score", chunks[0]["score"])
 
-        logger.info("[%s] retrieved %d chunks  embed_ms=%.0f: %s",
-                    domain, len(chunks), embed_ms,
+        logger.info("[%s] retrieved %d chunks  mode=%s  embed_ms=%.0f: %s",
+                    domain, len(chunks), _RETRIEVAL_MODE, embed_ms,
                     list(zip([c["doc_id"] for c in chunks],
                              [c["section"][:40] for c in chunks])))
         return chunks
