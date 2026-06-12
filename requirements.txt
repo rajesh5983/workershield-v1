@@ -9,3 +9,6 @@ gradio
 pyyaml
 tabulate
 requests
+arize-phoenix
+arize-phoenix-otel
+openinference-instrumentation-anthropic
