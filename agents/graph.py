@@ -11,10 +11,13 @@ Conditional edge after router_node:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import operator
 import os
 import time
+from pathlib import Path
 from typing import Annotated, Any
 
 import requests
@@ -22,6 +25,8 @@ from dotenv import load_dotenv
 from fastembed import SparseTextEmbedding
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 from opentelemetry import trace as _otel_trace
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -102,6 +107,7 @@ class WorkerShieldState(TypedDict):
     safeshift_chunks:  Annotated[list[dict], operator.add]
     fairdesk_chunks:   Annotated[list[dict], operator.add]
     healthnav_chunks:  Annotated[list[dict], operator.add]
+    incident_data:     list[dict]  # populated by incident_check_node when query matches
     synthesis_input:   str
     final_answer:      str
     citations:         list[dict]  # {doc_id, doc_title, section, domain, excerpt}
@@ -273,6 +279,112 @@ def _retrieve_traced(query: str, domain: str, client: QdrantClient) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# Incident check — MCP client helpers
+# ---------------------------------------------------------------------------
+
+_MCP_SERVER_PATH = str(Path(__file__).parent.parent / "mcp_server" / "incident_server.py")
+
+# Keywords that signal the user wants incident statistics or history
+_INCIDENT_KEYWORDS = frozenset([
+    "how many", "incident", "incidents", "cases", "history",
+    "trend", "statistics", "stats", "reported",
+])
+
+
+def _is_incident_query(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _INCIDENT_KEYWORDS)
+
+
+async def _mcp_call_tool(tool_name: str, arguments: dict) -> str:
+    """Call an MCP tool on the incident server via stdio transport."""
+    params = StdioServerParameters(command="python3", args=[_MCP_SERVER_PATH])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool_name, arguments)
+            return result.content[0].text if result.content else "{}"
+
+
+def _build_mcp_args(query: str) -> tuple[str, dict]:
+    """Derive the best MCP tool name and arguments from the natural-language query."""
+    q = query.lower()
+
+    # Detect domain filter
+    domain: str | None = None
+    if "safeshift" in q or "whs" in q or "safety" in q:
+        domain = "safeshift"
+    elif "fairdesk" in q or "fair work" in q or "dismissal" in q or "casual" in q:
+        domain = "fairdesk"
+    elif "healthnav" in q or "return to work" in q or "rtw" in q or "workers comp" in q:
+        domain = "healthnav"
+
+    # Detect category keyword
+    category: str | None = None
+    _cat_keywords = [
+        ("fatigue", ["fatigue"]),
+        ("return_to_work", ["return to work", "rtw", "return-to-work"]),
+        ("mental_health", ["mental health", "psychological", "burnout"]),
+        ("bullying", ["bullying", "harassment"]),
+        ("underpayment", ["underpayment", "underpaid"]),
+        ("unfair_dismissal", ["unfair dismissal", "dismissal"]),
+        ("casual_conversion", ["casual conversion"]),
+        ("musculoskeletal", ["musculoskeletal", "back injury", "shoulder"]),
+        ("workers_compensation", ["workers compensation", "workercomp", "worksafe"]),
+        ("slip_trip_fall", ["slip", "trip", "fall"]),
+        ("manual_handling", ["manual handling", "lifting"]),
+    ]
+    for cat, triggers in _cat_keywords:
+        if any(t in q for t in triggers):
+            category = cat
+            break
+
+    # Detect status filter
+    status: str | None = None
+    if "open" in q and ("case" in q or "incident" in q):
+        status = "open"
+    elif "closed" in q and ("case" in q or "incident" in q):
+        status = "closed"
+
+    # Summary tool is best for "how many" / trend / count questions
+    wants_summary = any(kw in q for kw in ["how many", "count", "summary", "trend", "statistic"])
+    if wants_summary:
+        return "get_incident_summary", {}
+
+    # Filtered query for specific domain / category / status requests
+    args = {k: v for k, v in [("domain", domain), ("category", category), ("status", status)] if v}
+    return "query_incidents", args
+
+
+def _fetch_incident_data(query: str) -> list[dict]:
+    """
+    Call the MCP incident server to fetch data relevant to the query.
+    Falls back to direct DB queries if the MCP subprocess call fails.
+    """
+    tool_name, args = _build_mcp_args(query)
+    logger.info("[incident_check] calling MCP tool=%s args=%s", tool_name, args)
+
+    try:
+        raw = asyncio.run(_mcp_call_tool(tool_name, args))
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []
+    except Exception as exc:
+        logger.warning("[incident_check] MCP call failed (%s) — falling back to direct DB", exc)
+        # Direct fallback so the node never silently returns empty
+        from data.incidents_db import (  # noqa: PLC0415
+            get_incident_summary as _direct_summary,
+            query_incidents as _direct_query,
+        )
+        if tool_name == "get_incident_summary":
+            return [_direct_summary()]
+        return _direct_query(**{k: v for k, v in args.items() if k in ("domain", "status", "category")})
+
+
+# ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
 
@@ -300,6 +412,13 @@ def healthnav_node(state: WorkerShieldState) -> dict[str, Any]:
     client = QdrantClient(url=QDRANT_HOST)
     chunks = _retrieve_traced(state["query"], "healthnav", client)
     return {"healthnav_chunks": chunks}
+
+
+def incident_check_node(state: WorkerShieldState) -> dict[str, Any]:
+    """Fetch incident statistics from the MCP server and add to state."""
+    data = _fetch_incident_data(state["query"])
+    logger.info("[incident_check] retrieved %d incident data items", len(data))
+    return {"incident_data": data}
 
 
 _DOMAIN_NODES = {
@@ -331,14 +450,18 @@ def output_node(state: WorkerShieldState) -> dict[str, Any]:
 
 def _route_domains(state: WorkerShieldState):
     """
-    Return a list of Send objects — one per detected domain node.
-    LangGraph fans these out in parallel when there are multiple.
+    Return a list of Send objects — one per detected domain node, plus
+    optionally incident_check_node when the query mentions incident statistics.
+    LangGraph fans all of these out in parallel.
     """
-    return [
+    sends = [
         Send(_DOMAIN_NODES[d], state)
         for d in state["detected_domains"]
         if d in _DOMAIN_NODES
     ]
+    if _is_incident_query(state["query"]):
+        sends.append(Send("incident_check_node", state))
+    return sends
 
 
 # ---------------------------------------------------------------------------
@@ -348,21 +471,25 @@ def _route_domains(state: WorkerShieldState):
 def build_graph() -> StateGraph:
     g = StateGraph(WorkerShieldState)
 
-    g.add_node("router_node",    router_node)
-    g.add_node("safeshift_node", safeshift_node)
-    g.add_node("fairdesk_node",  fairdesk_node)
-    g.add_node("healthnav_node", healthnav_node)
-    g.add_node("synthesis_node", synthesis_node)
-    g.add_node("output_node",    output_node)
+    g.add_node("router_node",        router_node)
+    g.add_node("safeshift_node",     safeshift_node)
+    g.add_node("fairdesk_node",      fairdesk_node)
+    g.add_node("healthnav_node",     healthnav_node)
+    g.add_node("incident_check_node", incident_check_node)
+    g.add_node("synthesis_node",     synthesis_node)
+    g.add_node("output_node",        output_node)
 
     g.add_edge(START, "router_node")
 
-    # Conditional fan-out from router → domain node(s)
+    # Conditional fan-out from router → domain node(s) + optional incident check
     g.add_conditional_edges("router_node", _route_domains)
 
     # All domain nodes converge on synthesis
     for node in _DOMAIN_NODES.values():
         g.add_edge(node, "synthesis_node")
+
+    # incident_check_node also feeds into synthesis
+    g.add_edge("incident_check_node", "synthesis_node")
 
     g.add_edge("synthesis_node", "output_node")
     g.add_edge("output_node", END)
@@ -401,6 +528,7 @@ if __name__ == "__main__":
         "safeshift_chunks": [],
         "fairdesk_chunks":  [],
         "healthnav_chunks": [],
+        "incident_data":    [],
         "synthesis_input":  "",
         "final_answer":     "",
         "citations":        [],

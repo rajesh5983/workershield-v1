@@ -31,6 +31,7 @@ You answer questions about WHS obligations, Fair Work entitlements, and occupati
 Always cite the specific document and section for every claim you make.
 Never answer from general knowledge — only from provided context.
 For cross-domain queries, include a paragraph explicitly connecting the obligations across domains.
+If an INCIDENT DATABASE section is present in the context, incorporate those statistics directly into your answer (e.g. "our records show 6 fatigue-related incidents this year"). Do not cite document IDs for incident statistics — reference them as "internal incident records".
 
 Respond with ONLY a valid JSON object — no markdown fences, no prose outside the JSON — in exactly this shape.
 Return a single flat JSON object. Do not nest JSON inside strings. Do not escape quotes inside field values. Use \n for newlines in the answer field.
@@ -61,7 +62,11 @@ Confidence guide:
 # ---------------------------------------------------------------------------
 
 def _build_context(state: dict[str, Any]) -> str:
-    """Group chunks by domain and format as a structured context block."""
+    """Group chunks by domain and format as a structured context block.
+
+    If incident_data is present in state, appends a formatted incident
+    statistics section so Sonnet can reference real incident numbers.
+    """
     domain_order = [
         ("safeshift", state.get("safeshift_chunks", [])),
         ("fairdesk",  state.get("fairdesk_chunks",  [])),
@@ -84,6 +89,48 @@ def _build_context(state: dict[str, Any]) -> str:
             )
             if i < len(chunks):
                 sections.append("---")
+
+    incident_data: list[dict] = state.get("incident_data", [])
+    if incident_data:
+        sections.append("── INCIDENT DATABASE ────────────────────────────────")
+        sections.append(
+            "The following live incident statistics are from the WorkerShield incident "
+            "database. Reference these numbers directly when answering questions about "
+            "incident counts, trends, or open cases."
+        )
+        for item in incident_data:
+            # Summary record (contains 'totals' key)
+            if "totals" in item:
+                t = item["totals"]
+                sections.append(
+                    f"INCIDENT SUMMARY: total={t.get('total', 0)}  "
+                    f"open={t.get('open', 0)}  "
+                    f"in_progress={t.get('in_progress', 0)}  "
+                    f"closed={t.get('closed', 0)}  "
+                    f"avg_days_to_resolve={t.get('avg_days_to_resolve', 'N/A')}"
+                )
+                if item.get("by_domain_status"):
+                    for row in item["by_domain_status"]:
+                        sections.append(
+                            f"  {row['domain']:<12} {row['status']:<12} count={row['count']}"
+                        )
+                if item.get("by_category"):
+                    sections.append("  Category breakdown:")
+                    for row in item["by_category"]:
+                        sections.append(
+                            f"    {row['domain']:<12} {row['category']:<25} count={row['count']}"
+                        )
+            else:
+                # Individual incident record
+                sections.append(
+                    f"INCIDENT {item.get('incident_id', '?')} "
+                    f"[{item.get('domain', '?')}] "
+                    f"category={item.get('category', '?')} "
+                    f"status={item.get('status', '?')} "
+                    f"reported={item.get('reported_date', '?')}"
+                )
+                if item.get("description"):
+                    sections.append(f"  {item['description'][:200]}")
 
     return "\n\n".join(sections)
 

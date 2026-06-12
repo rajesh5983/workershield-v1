@@ -73,6 +73,7 @@ EXAMPLES = [
     "What are the rules around casual employee overtime on public holidays?",
     "What psychosocial hazards must I manage under WHS law?",
     "What are my obligations when a worker is injured and needs to return to work?",
+    "How many fatigue-related incidents have we had this year, and what are our obligations to manage fatigue risk?",
 ]
 
 # ---------------------------------------------------------------------------

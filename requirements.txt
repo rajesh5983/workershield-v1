@@ -1,5 +1,6 @@
 anthropic
 openai
+mcp
 langgraph
 langchain
 langchain-text-splitters
