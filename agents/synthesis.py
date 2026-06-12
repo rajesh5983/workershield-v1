@@ -213,8 +213,18 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
         logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
         raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input)
         parsed = parse_llm_json(raw) or {"answer": raw, "citations": []}
+
+        # Sonnet sometimes nests its full structured response as a JSON string
+        # inside the "answer" field instead of at the top level.  Unwrap it.
+        answer_val = parsed.get("answer", "")
+        if isinstance(answer_val, str) and answer_val.strip().startswith("{"):
+            inner = parse_llm_json(answer_val)
+            if inner and "answer" in inner:
+                logger.info("[synthesis] unwrapped double-encoded response")
+                parsed = inner
+
         if "confidence" not in parsed:
-            logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
+            logger.warning("[synthesis] model omitted confidence field; deriving from chunk scores. raw=%r", raw[:120])
     except Exception as exc:
         logger.error("[synthesis] API call failed: %s", exc)
         parsed = {
