@@ -67,7 +67,7 @@ class WorkerShieldState(TypedDict):
     synthesis_input:   str
     final_answer:      str
     citations:         list[dict]  # {doc_id, doc_title, section, domain, excerpt}
-    confidence:        str         # "high", "medium", or "low"
+    confidence:        str         # "high", "medium", "low", or "insufficient"
 
 
 # ---------------------------------------------------------------------------
