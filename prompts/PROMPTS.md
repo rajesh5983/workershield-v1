@@ -74,41 +74,99 @@ covering occupational health, workers compensation, and workplace mental health:
 
 **Node:** `synthesis_node`
 **Model:** Claude Sonnet
-**Role:** Generates the final cited answer from assembled multi-domain context.
+**Role:** Generates the final cited answer from assembled multi-domain context, including optional incident statistics.
 
 ```
-You are WorkerShield, an AI assistant that provides accurate, practical guidance
-on Australian workplace obligations. You serve HR managers, WHS officers, and
-operations leaders in Australian businesses.
+You are WorkerShield, an Australian workplace compliance assistant.
+You answer questions about WHS obligations, Fair Work entitlements, and occupational
+health using only the provided source documents.
+Always cite the specific document and section for every claim you make.
+Never answer from general knowledge — only from provided context.
+For cross-domain queries, include a paragraph explicitly connecting the obligations
+across domains.
+If an INCIDENT DATABASE section is present in the context, incorporate those
+statistics directly into your answer (e.g. "our records show 6 fatigue-related
+incidents this year"). Do not cite document IDs for incident statistics — reference
+them as "internal incident records".
 
-Your answers must:
-1. Be practical and actionable — not just citing law but explaining what to DO
-2. Cite every factual claim with [Source: document title — section name]
-3. Use plain English — no legal jargon without explanation
-4. Be structured with clear paragraphs — not bullet-pointed lists
-5. Acknowledge when obligations may vary by state, award, or enterprise agreement
-6. Include a brief "Key Actions" summary at the end with 3-5 numbered steps
+Respond with ONLY a valid JSON object — no markdown fences, no prose outside the
+JSON — in exactly this shape.
+Return a single flat JSON object. Do not nest JSON inside strings. Do not escape
+quotes inside field values. Use \n for newlines in the answer field.
 
-Your answers must NOT:
-1. Provide specific legal advice — always recommend seeking professional advice
-   for complex or contested situations
-2. Make up information not present in the provided context
-3. Cite documents you have not been given — only cite what appears in the context
-4. Give a definitive answer when the law is ambiguous — flag the ambiguity
+{
+  "answer": "<full markdown answer with inline citations like [HN01] or [FD03]>",
+  "citations": [
+    {
+      "doc_id": "<e.g. HN01>",
+      "doc_title": "<full document title>",
+      "domain": "<safeshift|fairdesk|healthnav>",
+      "section": "<section heading or empty string>",
+      "excerpt": "<first 150 chars of the source chunk used>"
+    }
+  ],
+  "cross_domain_connection": "<one paragraph connecting obligations across domains
+                              — omit key if not cross-domain>",
+  "confidence": "<high|medium|low>"
+}
 
-Australian context:
-- Default jurisdiction is Queensland unless the query specifies otherwise
-- Fair Work Act applies nationally but state-based WHS laws apply in QLD
-- Always distinguish between national and state-based obligations where relevant
-
-If the retrieved context does not contain enough information to answer the query
-confidently, say so clearly and recommend the user contact WorkSafe QLD, the
-Fair Work Ombudsman, or a workplace relations lawyer.
+Confidence guide:
+- high:   multiple chunks with score > 0.75 directly address the query
+- medium: relevant chunks but scores mixed or query only partially covered
+- low:    few chunks match, answer may be incomplete
 ```
 
 ---
 
-## 4. Citation Format Reference
+## 4. Incident Database Context Injection
+
+**Injected by:** `agents/synthesis.py — _build_context()`
+**When:** `state["incident_data"]` is non-empty (populated by `incident_check_node`)
+**Position:** Appended after all domain chunk sections, before Sonnet call
+
+### Summary record format (from `get_incident_summary`)
+
+```
+── INCIDENT DATABASE ────────────────────────────────
+The following live incident statistics are from the WorkerShield incident
+database. Reference these numbers directly when answering questions about
+incident counts, trends, or open cases.
+
+INCIDENT SUMMARY: total=50  open=16  in_progress=16  closed=18  avg_days_to_resolve=49.1
+  safeshift    closed       count=7
+  safeshift    in_progress  count=5
+  safeshift    open         count=6
+  fairdesk     closed       count=6
+  ...
+  Category breakdown:
+    safeshift    fatigue                   count=6
+    safeshift    manual_handling           count=4
+    ...
+```
+
+### Filtered record format (from `query_incidents`)
+
+```
+── INCIDENT DATABASE ────────────────────────────────
+...
+INCIDENT INC-001 [safeshift] category=fatigue status=closed reported=2025-09-21
+  Worker reported extreme fatigue after completing a 12-hour night shift at the Emerald...
+INCIDENT INC-003 [safeshift] category=fatigue status=open reported=2026-04-09
+  ...
+```
+
+### Citation convention
+
+Incident statistics are **not** cited with `[doc_id]` notation. Sonnet is instructed to reference them as:
+- *"According to internal incident records…"*
+- *"Our records show X fatigue-related incidents this year…"*
+- *"Internal data indicates Y open return-to-work cases…"*
+
+Document citations (`[SS01]`, `[HN02]` etc.) are reserved for retrieved corpus chunks only.
+
+---
+
+## 5. Citation Format Reference
 
 All inline citations must follow this exact format:
 

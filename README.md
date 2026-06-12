@@ -30,18 +30,22 @@ flowchart LR
     SS["safeshift_node"]
     FD["fairdesk_node"]
     HN["healthnav_node"]
+    IC["incident_check_node\nMCP client"]
     Synth["synthesis_node\nClaude Sonnet\n+ refusal threshold"]
     Out["output_node"]
     Qdrant[("Qdrant :6333\n1,268 vectors")]
     Ollama["Ollama :11434\nnomic-embed-text"]
     Phoenix["Phoenix :6006\ntracing"]
+    MCP["MCP Server\nincident_server.py"]
+    SQLite[("SQLite\nincidents.db\n50 records")]
 
     User --> UI
     UI --> Router
     Router -->|safeshift| SS
     Router -->|fairdesk| FD
     Router -->|healthnav| HN
-    SS & FD & HN --> Synth
+    Router -->|"incident keywords"| IC
+    SS & FD & HN & IC --> Synth
     Synth -->|"answer + citations"| Out
     Out --> UI
     UI --> User
@@ -52,11 +56,13 @@ flowchart LR
     Ollama -.->|embed query| SS
     Ollama -.->|embed query| FD
     Ollama -.->|embed query| HN
+    MCP -.->|stdio| IC
+    SQLite -.->|SQL| MCP
     Phoenix -.->|LLM traces| Router
     Phoenix -.->|LLM traces| Synth
 ```
 
-The graph implements a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through: `router_node → domain retriever(s) → synthesis_node → output_node`. A conditional edge after the router fans out to all three domain nodes when `cross_domain = True`, or only the detected subset otherwise. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full design detail.
+The graph implements a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through: `router_node → domain retriever(s) + optional incident_check_node → synthesis_node → output_node`. A conditional edge after the router fans out to all three domain nodes when `cross_domain = True`, or only the detected subset otherwise. When the query mentions incident counts, trends, or history, `incident_check_node` fires in parallel via an MCP client call to the local SQLite incident database. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full design detail.
 
 ---
 
@@ -104,6 +110,8 @@ All sources are Australian open government publications (Safe Work Australia, Fa
 | Context Recall | **0.750** | ≥ 0.70 ✅ |
 | Answer Relevancy | **0.639** | ≥ 0.80 ⚠️ |
 
+**MCP incident database** — A FastMCP server (`mcp_server/incident_server.py`) exposes 50 synthetic incident records across all three domains as queryable tools (`query_incidents`, `get_incident_summary`, `get_incident_detail`). When the query mentions incident counts or trends, the `incident_check_node` calls the MCP server in parallel with domain retrieval; Sonnet weaves the statistics into the answer alongside document citations. The server is registered in Claude Code as `workershield-incidents`.
+
 **Phoenix observability tracing** — Every query generates OpenTelemetry traces via Arize Phoenix, capturing router decisions, per-domain retrieval scores, embedding latency, and synthesis token usage. Traces are viewable at `http://localhost:6006`.
 
 ---
@@ -145,15 +153,16 @@ workershield
 
 ## Example Queries
 
-| Query | Domains | Cross-domain |
-|---|---|---|
-| "What are my obligations as a PCBU under the WHS Act?" | `[safeshift]` | No |
-| "Is my casual employee entitled to conversion to permanent part-time?" | `[fairdesk]` | No |
-| "What must I do when a worker lodges a WorkCover claim?" | `[healthnav]` | No |
-| "What psychosocial hazards must I manage under WHS law?" | `[safeshift, healthnav]` | Yes |
-| "My FIFO worker has a mental health condition and wants to reduce hours — what are my obligations?" | `[safeshift, fairdesk, healthnav]` | Yes |
+| Query | Domains | Cross-domain | Incident DB |
+|---|---|---|---|
+| "What are my obligations as a PCBU under the WHS Act?" | `[safeshift]` | No | No |
+| "Is my casual employee entitled to conversion to permanent part-time?" | `[fairdesk]` | No | No |
+| "What must I do when a worker lodges a WorkCover claim?" | `[healthnav]` | No | No |
+| "What psychosocial hazards must I manage under WHS law?" | `[safeshift, healthnav]` | Yes | No |
+| "My FIFO worker has a mental health condition and wants to reduce hours — what are my obligations?" | `[safeshift, fairdesk, healthnav]` | Yes | No |
+| "How many fatigue-related incidents have we had this year, and what are our obligations to manage fatigue risk?" | `[safeshift, healthnav]` | Yes | **Yes** |
 
-The final query is the primary demo query: all three retrievers fire and Sonnet synthesises a single answer drawing from WHS duty of care, NES flexible working entitlements, and mental health employer obligations.
+The fifth query is the primary cross-domain demo. The sixth demonstrates the MCP incident integration: `incident_check_node` fires alongside domain retrievers and Sonnet combines internal statistics with document obligations.
 
 ---
 
@@ -166,6 +175,8 @@ The final query is the primary demo query: all three retrievers fire and Sonnet 
 | Synthesis LLM | Claude Sonnet (`claude-sonnet-4-6`) | Multi-document cited answer generation |
 | Vector store | Qdrant — Docker, `localhost:6333` | Domain-partitioned retrieval via payload filters |
 | Embedding model | Ollama `nomic-embed-text` (768d) | Local query and ingest embeddings |
+| Incident database | SQLite `data/incidents.db` | 50 synthetic incident records across 3 domains |
+| MCP server | FastMCP `mcp_server/incident_server.py` | Exposes incident DB as 3 tools over stdio transport |
 | Chunk strategy | Sliding window — 400 tokens, 50 overlap | Applied per document; see CHUNKING_DECISIONS.md |
 | Demo UI | Gradio `ui/app.py` | Browser query interface at `localhost:7860` |
 | Evaluation | RAGAS + OpenAI GPT-4o-mini judge | Offline quality evaluation against golden dataset |
@@ -179,6 +190,8 @@ The final query is the primary demo query: all three retrievers fire and Sonnet 
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design — Mermaid diagrams, node responsibilities, state machine, ingest pipeline, observability stack |
 | [`docs/CHUNKING_DECISIONS.md`](docs/CHUNKING_DECISIONS.md) | Per-document chunking strategy rationale |
+| [`data/incidents_schema.md`](data/incidents_schema.md) | Incident database schema — fields, categories, supported query patterns |
+| [`mcp_server/README.md`](mcp_server/README.md) | MCP server registration and usage guide |
 | [`tests/RAGAS_RESULTS.md`](tests/RAGAS_RESULTS.md) | RAGAS evaluation results — scores, methodology, per-query breakdown |
 
 ---
