@@ -14,20 +14,29 @@ from __future__ import annotations
 import logging
 import operator
 import os
+import time
 from typing import Annotated, Any
 
 import requests
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
+from opentelemetry import trace as _otel_trace
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 from typing_extensions import TypedDict
 
 from agents.router import router_node as _router_node
 from agents.synthesis import synthesis_node as _synthesis_node
+from observability.phoenix_setup import setup_phoenix
 
 load_dotenv()
+
+# Initialise Phoenix tracing before any LLM calls are made
+setup_phoenix()
+
+# Tracer for custom Qdrant retrieval spans (no-op when Phoenix is unavailable)
+_retrieval_tracer = _otel_trace.get_tracer("workershield.retrieval")
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +86,8 @@ def _embed(text: str) -> list[float]:
     return r.json()["embedding"]
 
 
-def _retrieve(query: str, domain: str, client: QdrantClient) -> list[dict]:
-    """Embed query, query Qdrant filtered to domain, return top-K payloads."""
-    vec  = _embed(query)
+def _query_qdrant(vec: list[float], domain: str, client: QdrantClient) -> list[dict]:
+    """Run a domain-filtered Qdrant search and return chunk dicts."""
     hits = client.query_points(
         collection_name=COLLECTION,
         query=vec,
@@ -89,26 +97,52 @@ def _retrieve(query: str, domain: str, client: QdrantClient) -> list[dict]:
         limit=TOP_K,
         with_payload=True,
     ).points
-
     chunks = []
     for h in hits:
         p = h.payload
         chunks.append({
-            "doc_id":   p.get("doc_id", ""),
-            "domain":   p.get("domain", ""),
-            "title":    p.get("title", ""),
-            "source":   p.get("source", ""),
-            "section":  p.get("section", ""),
-            "page":     p.get("page_estimate", 1),
-            "score":    round(h.score, 4),
-            "text":     p.get("text", ""),
+            "doc_id":  p.get("doc_id", ""),
+            "domain":  p.get("domain", ""),
+            "title":   p.get("title", ""),
+            "source":  p.get("source", ""),
+            "section": p.get("section", ""),
+            "page":    p.get("page_estimate", 1),
+            "score":   round(h.score, 4),
+            "text":    p.get("text", ""),
         })
-
-    doc_ids = [c["doc_id"] for c in chunks]
-    sections = [c["section"][:40] for c in chunks]
-    logger.info("[%s] retrieved %d chunks: %s", domain, len(chunks),
-                list(zip(doc_ids, sections)))
     return chunks
+
+
+def _retrieve(query: str, domain: str, client: QdrantClient) -> list[dict]:
+    """Embed query, query Qdrant filtered to domain, return top-K payloads."""
+    vec    = _embed(query)
+    chunks = _query_qdrant(vec, domain, client)
+    logger.info("[%s] retrieved %d chunks: %s", domain, len(chunks),
+                list(zip([c["doc_id"] for c in chunks],
+                         [c["section"][:40] for c in chunks])))
+    return chunks
+
+
+def _retrieve_traced(query: str, domain: str, client: QdrantClient) -> list[dict]:
+    """Like _retrieve but wrapped in a custom OTEL span with timing attributes."""
+    with _retrieval_tracer.start_as_current_span("qdrant.retrieve") as span:
+        span.set_attribute("workershield.domain", domain)
+
+        t0 = time.monotonic()
+        vec = _embed(query)
+        embed_ms = round((time.monotonic() - t0) * 1000, 1)
+        span.set_attribute("workershield.embedding_time_ms", embed_ms)
+
+        chunks = _query_qdrant(vec, domain, client)
+        span.set_attribute("workershield.chunks_retrieved", len(chunks))
+        if chunks:
+            span.set_attribute("workershield.top_chunk_score", chunks[0]["score"])
+
+        logger.info("[%s] retrieved %d chunks  embed_ms=%.0f: %s",
+                    domain, len(chunks), embed_ms,
+                    list(zip([c["doc_id"] for c in chunks],
+                             [c["section"][:40] for c in chunks])))
+        return chunks
 
 
 # ---------------------------------------------------------------------------
@@ -125,22 +159,19 @@ def router_node(state: WorkerShieldState) -> dict[str, Any]:
 
 def safeshift_node(state: WorkerShieldState) -> dict[str, Any]:
     client = QdrantClient(url=QDRANT_HOST)
-    chunks = _retrieve(state["query"], "safeshift", client)
-    logger.info("[safeshift] %d chunks retrieved", len(chunks))
+    chunks = _retrieve_traced(state["query"], "safeshift", client)
     return {"safeshift_chunks": chunks}
 
 
 def fairdesk_node(state: WorkerShieldState) -> dict[str, Any]:
     client = QdrantClient(url=QDRANT_HOST)
-    chunks = _retrieve(state["query"], "fairdesk", client)
-    logger.info("[fairdesk] %d chunks retrieved", len(chunks))
+    chunks = _retrieve_traced(state["query"], "fairdesk", client)
     return {"fairdesk_chunks": chunks}
 
 
 def healthnav_node(state: WorkerShieldState) -> dict[str, Any]:
     client = QdrantClient(url=QDRANT_HOST)
-    chunks = _retrieve(state["query"], "healthnav", client)
-    logger.info("[healthnav] %d chunks retrieved", len(chunks))
+    chunks = _retrieve_traced(state["query"], "healthnav", client)
     return {"healthnav_chunks": chunks}
 
 

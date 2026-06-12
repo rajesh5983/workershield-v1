@@ -1,0 +1,22 @@
+model_provider: anthropic
+
+anthropic:
+  router: claude-haiku-4-5-20251001
+  synthesis: claude-sonnet-4-6
+
+openai:
+  router: gpt-4o-mini
+  synthesis: gpt-4o
+
+local:
+  router: mistral
+  synthesis: mistral
+  base_url: http://192.168.100.1:11434
+
+comparison_models:
+  - provider: anthropic
+    label: "Anthropic (Haiku router + Sonnet synthesis)"
+  - provider: openai
+    label: "OpenAI (GPT-4o-mini router + GPT-4o synthesis)"
+  - provider: local
+    label: "Local (Mistral router + Mistral synthesis)"

@@ -2,21 +2,21 @@
 WorkerShield synthesis node.
 
 Receives a populated WorkerShieldState (all domain chunk lists filled),
-calls Claude Sonnet 4.6 with a structured context block, and returns
-a JSON-shaped answer with inline citations, a confidence score, and
-(for cross-domain queries) an explicit cross-domain connection paragraph.
+calls the configured LLM (local Ollama or Anthropic) with a structured
+context block, and returns a JSON-shaped answer with inline citations,
+a confidence score, and (for cross-domain queries) an explicit
+cross-domain connection paragraph.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 from typing import Any
 
-import anthropic
 from dotenv import load_dotenv
+
+from utils.model_factory import ModelFactory, parse_llm_json
 
 load_dotenv()
 
@@ -129,36 +129,6 @@ def _extract_citations(answer_text: str, all_chunks: list[dict]) -> list[dict]:
     return citations
 
 
-# ---------------------------------------------------------------------------
-# JSON parser
-# ---------------------------------------------------------------------------
-
-def _parse_synthesis_response(raw: str) -> dict:
-    """Robustly parse Sonnet's JSON response, handling markdown fences and
-    escaped-quote issues that break a straight json.loads()."""
-    # Strip markdown fences
-    raw = raw.strip()
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:])
-        raw = raw.rsplit("```", 1)[0].strip()
-
-    # Try direct parse first
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Fallback: extract answer field directly with regex
-    answer_match = re.search(
-        r'"answer"\s*:\s*"(.*?)(?<!\\)"\s*,\s*"citations"', raw, re.DOTALL
-    )
-    if answer_match:
-        answer = answer_match.group(1).replace("\\n", "\n").replace('\\"', '"')
-        return {"answer": answer, "citations": [], "confidence": "medium"}
-
-    # Final fallback: return raw text as answer
-    return {"answer": raw, "citations": [], "confidence": "low"}
 
 
 # ---------------------------------------------------------------------------
@@ -186,19 +156,14 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
         len(all_chunks), cross_domain, len(synthesis_input),
     )
 
-    # ── Sonnet call ─────────────────────────────────────────────────────────
+    # ── LLM call ─────────────────────────────────────────────────────────────
     try:
-        api_client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env (loaded at module level)
-        message    = api_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1500,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": synthesis_input}],
-        )
-        raw    = message.content[0].text
-        parsed = _parse_synthesis_response(raw)
-        if parsed.get("confidence") == "low" and parsed.get("answer") == raw.strip():
-            logger.warning("[synthesis] JSON parse fell back to raw text, raw=%r", raw[:200])
+        llm = ModelFactory().get_synthesis_llm()
+        logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
+        raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input)
+        parsed = parse_llm_json(raw) or {"answer": raw, "citations": []}
+        if "confidence" not in parsed:
+            logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
     except Exception as exc:
         logger.error("[synthesis] API call failed: %s", exc)
         parsed = {
@@ -256,6 +221,7 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import os
     import requests as _requests
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
