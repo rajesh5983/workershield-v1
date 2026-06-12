@@ -1,0 +1,204 @@
+{
+  "timestamp": "2026-06-12T11:57:43.504406+00:00",
+  "model_provider": "anthropic",
+  "router_model": "claude-haiku-4-5-20251001",
+  "synthesis_model": "claude-sonnet-4-6",
+  "judge_llm": "gpt-4o-mini (OpenAI)",
+  "judge_embeddings": "text-embedding-3-small (OpenAI)",
+  "metrics": [
+    "faithfulness",
+    "context_precision",
+    "context_recall",
+    "answer_relevancy"
+  ],
+  "total_time_seconds": 663.2,
+  "per_query": [
+    {
+      "query_num": 1,
+      "query": "What are my obligations if a FIFO worker has a mental health condition and wants to reduce hours?",
+      "expected_domains": [
+        "fairdesk",
+        "healthnav"
+      ],
+      "detected_domains": [
+        "healthnav",
+        "fairdesk"
+      ],
+      "expected_doc_ids": [
+        "HN01",
+        "FD03"
+      ],
+      "answer_excerpt": "{\n  \"answer\": \"## Obligations When a FIFO Worker Has a Mental Health Condition and Wants to Reduce Hours\\n\\nThis situation engages obligations across both **WHS/psychological health law** and **Fair W",
+      "context_count": 6,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": 0.9676
+      }
+    },
+    {
+      "query_num": 2,
+      "query": "What are the rules around casual employee overtime on public holidays?",
+      "expected_domains": [
+        "fairdesk"
+      ],
+      "detected_domains": [
+        "fairdesk"
+      ],
+      "expected_doc_ids": [
+        "FD01",
+        "FD02"
+      ],
+      "answer_excerpt": "{\n  \"answer\": \"## Casual Employee Overtime on Public Holidays\\n\\nBased on the provided source documents, there is **no specific information** about overtime rates for casual employees on public holida",
+      "context_count": 3,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 0.0,
+        "answer_relevancy": 0.0
+      }
+    },
+    {
+      "query_num": 3,
+      "query": "What psychosocial hazards must I manage under WHS law?",
+      "expected_domains": [
+        "safeshift",
+        "healthnav"
+      ],
+      "detected_domains": [
+        "safeshift",
+        "healthnav"
+      ],
+      "expected_doc_ids": [
+        "HN01",
+        "SS03b"
+      ],
+      "answer_excerpt": "## Psychosocial Hazards You Must Manage Under WHS Law\n\n### Legal Duty\n\nUnder the WHS laws, a **PCBU (Person Conducting a Business or Undertaking)** has a primary duty to ensure, so far as is reasonabl",
+      "context_count": 6,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": 0.7925
+      }
+    },
+    {
+      "query_num": 4,
+      "query": "What are my obligations when a worker is injured and needs to return to work?",
+      "expected_domains": [
+        "healthnav"
+      ],
+      "detected_domains": [
+        "safeshift",
+        "fairdesk",
+        "healthnav"
+      ],
+      "expected_doc_ids": [
+        "HN03"
+      ],
+      "answer_excerpt": "{\n  \"answer\": \"## Return-to-Work (RTW) Obligations When a Worker Is Injured\\n\\nWhen a worker is injured, you have obligations spanning workplace health and safety law, workers' compensation law, and e",
+      "context_count": 9,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": 0.8946
+      }
+    },
+    {
+      "query_num": 5,
+      "query": "What is a Code of Practice under WHS legislation?",
+      "expected_domains": [
+        "safeshift"
+      ],
+      "detected_domains": [
+        "safeshift"
+      ],
+      "expected_doc_ids": [
+        "SS01",
+        "SS02"
+      ],
+      "answer_excerpt": "Based on the documents provided to me, I am unable to give a complete answer about what a Code of Practice is under WHS legislation. The source chunks retrieved ([SS03a] and [SS03b]) do not contain a ",
+      "context_count": 3,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 0.0,
+        "answer_relevancy": 0.0
+      }
+    },
+    {
+      "query_num": 6,
+      "query": "What entitlements does a casual employee have under the NES?",
+      "expected_domains": [
+        "fairdesk"
+      ],
+      "detected_domains": [
+        "fairdesk"
+      ],
+      "expected_doc_ids": [
+        "FD01",
+        "FD02"
+      ],
+      "answer_excerpt": "## NES Entitlements for Casual Employees\n\nUnder the National Employment Standards (NES), casual employees have access to a specific subset of entitlements. These are outlined below.\n\n---\n\n### Entitlem",
+      "context_count": 3,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": null
+      }
+    },
+    {
+      "query_num": 7,
+      "query": "What does the WHS Act say about a worker's duty to take reasonable care?",
+      "expected_domains": [
+        "safeshift"
+      ],
+      "detected_domains": [
+        "safeshift"
+      ],
+      "expected_doc_ids": [
+        "SS03a",
+        "SS03b"
+      ],
+      "answer_excerpt": "## Worker's Duty to Take Reasonable Care under the WHS Act\n\nUnder the **Queensland Work Health and Safety Act 2011**, a worker's duties are set out in **section 28**. While at work, a worker must [SS0",
+      "context_count": 3,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": 0.6305
+      }
+    },
+    {
+      "query_num": 8,
+      "query": "How can fatigue affect workplace safety?",
+      "expected_domains": [
+        "healthnav"
+      ],
+      "detected_domains": [
+        "safeshift",
+        "healthnav"
+      ],
+      "expected_doc_ids": [
+        "HN02"
+      ],
+      "answer_excerpt": "{\n  \"answer\": \"## How Fatigue Affects Workplace Safety\\n\\n### What Is Fatigue?\\n\\nFatigue is more than simply feeling sleepy or tired. According to Safe Work Australia, it is **a state of impairment**",
+      "context_count": 6,
+      "scores": {
+        "faithfulness": null,
+        "context_precision": null,
+        "context_recall": 1.0,
+        "answer_relevancy": 0.9452
+      }
+    }
+  ],
+  "aggregates": {
+    "faithfulness": null,
+    "context_precision": null,
+    "context_recall": 0.75,
+    "answer_relevancy": 0.6043
+  }
+}
