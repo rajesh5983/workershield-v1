@@ -59,12 +59,56 @@ def set_model_provider(provider: str) -> None:
 # Shared JSON parser
 # ---------------------------------------------------------------------------
 
+def _heal_inner_quotes(text: str) -> str:
+    """Escape unescaped double quotes that appear inside JSON string values.
+
+    Sonnet occasionally embeds verbatim document excerpts containing double
+    quotes (e.g. blockquote markers) without escaping them.  Walk the string
+    character-by-character; when inside a string value and we see a bare '"',
+    peek ahead — if the next non-whitespace char is NOT a JSON delimiter
+    (, } ] :) then it is an internal quote and must be escaped.
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == '\\' and i + 1 < len(text):
+                # Already-escaped pair — pass both chars through unchanged
+                out.append(ch)
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                # Peek past whitespace to decide if this ends the string cleanly
+                j = i + 1
+                while j < len(text) and text[j] in ' \t\r\n':
+                    j += 1
+                if j >= len(text) or text[j] in ',}]:':
+                    in_string = False
+                    out.append(ch)
+                else:
+                    out.append('\\')
+                    out.append('"')
+                i += 1
+                continue
+        else:
+            if ch == '"':
+                in_string = True
+        out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
 def parse_llm_json(text: str) -> dict | None:
     """Parse JSON from LLM output, tolerating markdown fences and minor formatting errors.
 
-    Strategy: try a clean parse first (preserves apostrophes in string values),
-    then fall back to single-quote replacement for local models that emit
-    Python-dict-style output.
+    Passes tried in order:
+      1. Clean parse — standard json.loads after stripping fences / trailing commas
+      2. Single-quote fix — for local models that emit Python-dict-style output
+      3. Inner-quote heal — for Sonnet responses where document blockquotes contain
+         unescaped double quotes inside the "answer" string value
     """
     if not text:
         return None
@@ -98,6 +142,15 @@ def parse_llm_json(text: str) -> dict | None:
     clean2 = re.sub(r',\s*]', ']', clean2)
     try:
         return json.loads(clean2)
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 3 — heal unescaped inner quotes (Sonnet blockquote/citation content)
+    healed = _heal_inner_quotes(candidate)
+    healed = re.sub(r',\s*}', '}', healed)
+    healed = re.sub(r',\s*]', ']', healed)
+    try:
+        return json.loads(healed)
     except json.JSONDecodeError:
         pass
 
@@ -234,7 +287,7 @@ class ModelFactory:
         # "local" maps to Ollama internally
         llm_provider = "ollama" if provider == "local" else provider
         base_url     = provider_cfg.get("base_url") if provider == "local" else None
-        max_tokens   = 256 if role == "router" else 1500
+        max_tokens   = 256 if role == "router" else 4096
         overhead     = _THINKING_OVERHEAD.get(model, 0) if llm_provider == "ollama" else 0
 
         return LLMClient(

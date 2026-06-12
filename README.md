@@ -1,73 +1,159 @@
 # WorkerShield v1
 
-**Agentic RAG for Australian workplace compliance — cited answers across safety law, Fair Work, and occupational health.**
+**Agentic RAG assistant for Australian workplace compliance — cited answers across WHS safety law, Fair Work entitlements, and occupational health.**
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-orange)
-![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20Store-red?logo=qdrant)
+![Qdrant](https://img.shields.io/badge/Qdrant-Vector%20Store-red)
+![Anthropic](https://img.shields.io/badge/Anthropic-Haiku%20%2B%20Sonnet-blueviolet)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
 ## Overview
 
-WorkerShield is a production-grade agentic RAG platform that gives Australian employers and HR practitioners fast, cited answers to workplace compliance questions. It covers three domains — WHS/safety law, Fair Work Act entitlements, and occupational health — within a single agent graph that routes queries, retrieves relevant legislation and codes of practice, and synthesises a grounded answer with traceable citations.
+WorkerShield is a production-grade agentic RAG platform that gives Australian employers and HR practitioners fast, cited answers to workplace compliance questions. It covers three domains — WHS safety law, Fair Work Act entitlements, and occupational health — within a single LangGraph agent graph that routes queries, retrieves relevant legislation and codes of practice, and synthesises a grounded answer with traceable citations.
 
-The platform is designed for the compliance questions that actually come up on the floor: FIFO fatigue risk, casual conversion rights, what happens when a worker lodges a WorkCover claim, how to handle a flexible working request from someone managing a mental health condition. Rather than returning a document list, WorkerShield returns a direct answer with the source, section, and domain clearly attributed — the kind of output a senior HR manager or safety officer can act on.
+The platform is designed for the compliance questions that arise in practice: FIFO fatigue risk, casual conversion rights, WorkCover claim obligations, flexible working requests for workers managing mental health conditions. Rather than returning a document list, WorkerShield returns a direct answer with the source, section, and domain clearly attributed.
 
-WorkerShield v1 is a portfolio project demonstrating end-to-end agentic RAG architecture: domain routing with a lightweight LLM, partitioned vector retrieval, cross-domain synthesis, and a Gradio demo UI — all wired together with LangGraph's `StateGraph`.
+WorkerShield v1 is a portfolio project demonstrating end-to-end agentic RAG architecture for a technical hiring audience evaluating production AI system design.
 
 ---
 
 ## Architecture
 
 ```mermaid
-%% WorkerShield — System Architecture
 flowchart LR
-    User(["User"])
+    User(["User Query"])
     UI["Gradio UI\nlocalhost:7860"]
     Router["router_node\nClaude Haiku"]
     SS["safeshift_node"]
     FD["fairdesk_node"]
     HN["healthnav_node"]
-    Synth["synthesis_node\nClaude Sonnet"]
+    Synth["synthesis_node\nClaude Sonnet\n+ refusal threshold"]
     Out["output_node"]
-    Qdrant[("Qdrant\n:6333\nworkershield")]
-    Ollama["Ollama\nnomic-embed-text\n:11434"]
+    Qdrant[("Qdrant :6333\n1,268 vectors")]
+    Ollama["Ollama :11434\nnomic-embed-text"]
+    Phoenix["Phoenix :6006\ntracing"]
 
-    User -->|query| UI
+    User --> UI
     UI --> Router
     Router -->|safeshift| SS
     Router -->|fairdesk| FD
     Router -->|healthnav| HN
-    SS --> Synth
-    FD --> Synth
-    HN --> Synth
-    Synth --> Out
-    Out -->|"answer + citations"| UI
-    UI -->|cited answer| User
+    SS & FD & HN --> Synth
+    Synth -->|"answer + citations"| Out
+    Out --> UI
+    UI --> User
 
-    Qdrant -.-> SS
-    Qdrant -.-> FD
-    Qdrant -.-> HN
-    Ollama -.-> SS
-    Ollama -.-> FD
-    Ollama -.-> HN
+    Qdrant -.->|domain-filtered\nvector search| SS
+    Qdrant -.->|domain-filtered\nvector search| FD
+    Qdrant -.->|domain-filtered\nvector search| HN
+    Ollama -.->|embed query| SS
+    Ollama -.->|embed query| FD
+    Ollama -.->|embed query| HN
+    Phoenix -.->|LLM traces| Router
+    Phoenix -.->|LLM traces| Synth
 ```
 
-The full agent graph is implemented as a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through four nodes: `router_node → retrieval_node → synthesis_node → output_node`. A conditional edge after the router fires all three retrievers when `cross_domain = True`, or only the detected subset otherwise.
+The graph implements a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through: `router_node → domain retriever(s) → synthesis_node → output_node`. A conditional edge after the router fans out to all three domain nodes when `cross_domain = True`, or only the detected subset otherwise. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full design detail.
 
 ---
 
 ## Three Domains
 
-| Domain | Coverage | Source Documents |
-|---|---|---|
-| **SafeShift** | WHS Act 2011 duties, QLD codes of practice, PPE, manual handling, fatigue risk, PCBU obligations | Managing Work Environment COP, Hazardous Manual Tasks COP, WHS Act Key Duties Summary |
-| **FairDesk** | Fair Work Act, National Employment Standards (NES), casual conversion, flexible working, termination notice | NES Employee Guide, Casual Employment Employer Guide, Flexible Working Arrangements Guide |
-| **HealthNav** | Occupational health, work-related mental health, fatigue management, workers compensation, WorkCover QLD obligations | Mental Health Employer Guide (Safe Work Australia), Fatigue Management Guide (Safe Work Australia), Workers Compensation Employer Guide (WorkCover QLD) |
+| Domain | Coverage |
+|---|---|
+| **SafeShift** | WHS Act 2011 duties, QLD codes of practice, PPE, manual handling, fatigue risk, PCBU obligations |
+| **FairDesk** | Fair Work Act, National Employment Standards, casual conversion, flexible working, termination notice |
+| **HealthNav** | Occupational health, work-related mental health, workers compensation, WorkCover QLD obligations |
 
-All source documents are Australian open government publications. 9 documents, 3 per domain.
+### Source Documents (10 doc_ids across 9 registered sources)
+
+| Domain | Doc ID | Title |
+|---|---|---|
+| SafeShift | SS01 | Code of Practice — Managing the Work Environment |
+| SafeShift | SS02 | Code of Practice — Hazardous Manual Tasks |
+| SafeShift | SS03a | Queensland Work Health and Safety Act 2011 |
+| SafeShift | SS03b | Guide to Model WHS Act — Key Duties |
+| FairDesk | FD01 | National Employment Standards — Employee Guide |
+| FairDesk | FD02 | Casual Employment — Employer Guide |
+| FairDesk | FD03 | Flexible Working Arrangements — Guide |
+| HealthNav | HN01 | Work-Related Mental Health — Employer Guide |
+| HealthNav | HN02 | Fatigue Management in the Workplace |
+| HealthNav | HN03 | Workers Compensation — Guide for Employers |
+
+All sources are Australian open government publications (Safe Work Australia, Fair Work Ombudsman, WorkCover QLD). Chunking strategies per document: [`docs/CHUNKING_DECISIONS.md`](docs/CHUNKING_DECISIONS.md).
+
+---
+
+## Key Features
+
+**Cross-domain agentic routing** — Claude Haiku classifies each query across all three domains with a JSON-structured prompt. When a query spans multiple regulatory frameworks, `cross_domain = True` fans out to all three Qdrant partitions simultaneously via LangGraph `Send` primitives.
+
+**Citation-grounded synthesis** — Claude Sonnet synthesises answers exclusively from retrieved chunks. Every claim is annotated with a `[doc_id]` inline citation; the UI renders a structured sources table below the answer.
+
+**Refusal threshold for out-of-scope queries** — Before calling the synthesis LLM, the system checks average and maximum retrieval scores across all returned chunks. If `avg_score < 0.65` AND `max_score < 0.70` (both conditions), the LLM call is skipped and a structured refusal is returned (`confidence = "insufficient"`), directing the user to the relevant regulator. Thresholds are calibrated against observed score distributions: off-topic queries score avg ~0.58 / max ~0.62; in-scope queries score avg ~0.74 / max ~0.77.
+
+**RAGAS-evaluated quality** — The system is evaluated against an 8-query golden dataset using the RAGAS framework with an OpenAI GPT-4o-mini judge (independent of the production stack). See [`tests/RAGAS_RESULTS.md`](tests/RAGAS_RESULTS.md) for full results.
+
+| Metric | Score | Target |
+|---|---|---|
+| Faithfulness | **0.894** | ≥ 0.85 ✅ |
+| Context Precision | **0.750** | ≥ 0.70 ✅ |
+| Context Recall | **0.750** | ≥ 0.70 ✅ |
+| Answer Relevancy | **0.639** | ≥ 0.80 ⚠️ |
+
+**Phoenix observability tracing** — Every query generates OpenTelemetry traces via Arize Phoenix, capturing router decisions, per-domain retrieval scores, embedding latency, and synthesis token usage. Traces are viewable at `http://localhost:6006`.
+
+---
+
+## Quick Start
+
+**Prerequisites:** Python 3.11+, Docker (for Qdrant), Ollama with `nomic-embed-text` pulled, an Anthropic API key.
+
+```bash
+# 1. Clone
+git clone https://github.com/rajesh5983/workershield-v1.git
+cd workershield-v1
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env — set ANTHROPIC_API_KEY at minimum
+
+# 4. Start Qdrant
+docker run -p 6333:6333 qdrant/qdrant
+
+# 5. Ingest corpus (run once)
+python ingest/load_qdrant.py
+
+# 6. Launch UI
+bash launch.sh
+# → http://localhost:7860
+```
+
+**Convenience alias:**
+```bash
+alias workershield='bash /path/to/workershield-v1/launch.sh'
+workershield
+```
+
+---
+
+## Example Queries
+
+| Query | Domains | Cross-domain |
+|---|---|---|
+| "What are my obligations as a PCBU under the WHS Act?" | `[safeshift]` | No |
+| "Is my casual employee entitled to conversion to permanent part-time?" | `[fairdesk]` | No |
+| "What must I do when a worker lodges a WorkCover claim?" | `[healthnav]` | No |
+| "What psychosocial hazards must I manage under WHS law?" | `[safeshift, healthnav]` | Yes |
+| "My FIFO worker has a mental health condition and wants to reduce hours — what are my obligations?" | `[safeshift, fairdesk, healthnav]` | Yes |
+
+The final query is the primary demo query: all three retrievers fire and Sonnet synthesises a single answer drawing from WHS duty of care, NES flexible working entitlements, and mental health employer obligations.
 
 ---
 
@@ -75,94 +161,45 @@ All source documents are Australian open government publications. 9 documents, 3
 
 | Component | Technology | Purpose |
 |---|---|---|
-| Agent framework | LangGraph `StateGraph` | Directed graph orchestration with typed shared state |
-| Router LLM | Claude Haiku (Anthropic API) | Lightweight domain classification with JSON output |
-| Synthesis LLM | Claude Sonnet (Anthropic API) | Cited answer generation from retrieved context |
-| Vector store | Qdrant — Docker, `localhost:6333` | Partitioned document retrieval by domain |
-| Embedding model | Ollama `nomic-embed-text` (local, 768d) | Offline text embedding for ingestion and query |
-| Chunking | Sliding window — 400 tokens, 50 overlap | Applied uniformly across all 9 source documents |
-| Demo UI | Gradio (`ui/app.py`) | Browser-based query interface at `localhost:7860` |
-| Observability | JSONL run logs (`logs/run_log.jsonl`) | Structured per-query logging via `utils/logger.py` |
+| Agent framework | LangGraph `StateGraph` | Directed graph with typed shared state and parallel fan-out |
+| Router LLM | Claude Haiku (`claude-haiku-4-5-20251001`) | Lightweight domain classification, JSON output |
+| Synthesis LLM | Claude Sonnet (`claude-sonnet-4-6`) | Multi-document cited answer generation |
+| Vector store | Qdrant — Docker, `localhost:6333` | Domain-partitioned retrieval via payload filters |
+| Embedding model | Ollama `nomic-embed-text` (768d) | Local query and ingest embeddings |
+| Chunk strategy | Sliding window — 400 tokens, 50 overlap | Applied per document; see CHUNKING_DECISIONS.md |
+| Demo UI | Gradio `ui/app.py` | Browser query interface at `localhost:7860` |
+| Evaluation | RAGAS + OpenAI GPT-4o-mini judge | Offline quality evaluation against golden dataset |
+| Observability | Arize Phoenix + OTEL | Live LLM tracing at `localhost:6006` |
 
 ---
 
-## Quick Start
+## Documentation
 
-**Prerequisites:** Python 3.11+, Docker, Ollama with `nomic-embed-text` pulled, an Anthropic API key.
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/rajprasannakumar/workershield-v1.git
-   cd workershield-v1
-   ```
-
-2. **Install Python dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env and set ANTHROPIC_API_KEY=<your key>
-   ```
-
-4. **Start Qdrant**
-   ```bash
-   docker run -p 6333:6333 qdrant/qdrant
-   ```
-
-5. **Ingest the corpus into Qdrant**
-   ```bash
-   python ingest/load_qdrant.py
-   ```
-   This extracts, chunks, embeds, and upserts all 9 documents into the `workershield` collection.
-
-6. **Launch the demo UI**
-   ```bash
-   python ui/app.py
-   ```
-   Open `http://localhost:7860` in your browser.
-
----
-
-## Example Queries
-
-| Query | Domains Activated |
+| Document | Contents |
 |---|---|
-| "What are my obligations as a PCBU under the WHS Act?" | `[safeshift]` |
-| "Is my casual employee entitled to conversion to permanent part-time?" | `[fairdesk]` |
-| "What must I do when a worker lodges a WorkCover claim?" | `[healthnav]` |
-| "My FIFO worker has a mental health condition and wants to reduce hours — what are my obligations under safety law and fair work?" | `[safeshift, fairdesk, healthnav]` |
-| "Can I refuse a flexible working request from a worker managing fatigue from night shifts?" | `[safeshift, fairdesk]` |
-
-The fourth query is the primary demo query for cross-domain synthesis: it activates all three retrievers and returns a single answer citing WHS duty of care, NES flexible working entitlements, and mental health employer obligations.
-
----
-
-## Observability
-
-Every query run is appended as a structured JSON record to `logs/run_log.jsonl` via `utils/logger.py`. Each record captures the raw query, detected domains, `cross_domain` flag, chunk counts retrieved per domain, the synthesis input size, and the final answer with citations. The companion utility `utils/log_reader.py` prints a human-readable summary of recent runs — useful for iterating on prompt quality and diagnosing routing errors during development.
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design — Mermaid diagrams, node responsibilities, state machine, ingest pipeline, observability stack |
+| [`docs/CHUNKING_DECISIONS.md`](docs/CHUNKING_DECISIONS.md) | Per-document chunking strategy rationale |
+| [`tests/RAGAS_RESULTS.md`](tests/RAGAS_RESULTS.md) | RAGAS evaluation results — scores, methodology, per-query breakdown |
 
 ---
 
 ## Known Limitations
 
-- **Corpus is static and narrow.** v1 covers 9 documents across 3 domains. Coverage gaps exist — particularly in modern award specifics, state-based WHS regulations outside QLD, and workers compensation schemes outside Queensland.
-- **Embeddings are local and not cached.** `nomic-embed-text` runs via Ollama at query time. On low-spec hardware, embedding latency adds to end-to-end response time; there is no query-level embedding cache in v1.
-- **No answer grounding verification.** The synthesis node does not verify that citations map to actual retrieved chunks. Hallucinated citations are possible if the LLM deviates from the system prompt.
-- **Single-turn only.** WorkerShield v1 has no conversation memory. Each query is processed independently; follow-up questions cannot reference prior answers.
+- **Corpus coverage.** v1 covers 10 doc_ids across 3 domains, with QLD-centric WHS sources. Modern award specifics, state-based WHS regulations outside QLD, and workers compensation schemes outside Queensland are not covered.
+- **No conversation memory.** Each query is processed independently; follow-up questions cannot reference prior answers. Stateless by design for compliance audit trail clarity.
+- **Single-pass retrieval.** No ReAct reflection loop — retrieval and synthesis happen once per query. Ambiguous queries cannot trigger follow-up retrievals.
+- **Answer Relevancy gap.** RAGAS Answer Relevancy sits at 0.639 against a 0.80 target, driven primarily by Q2 (casual overtime on public holidays — a coverage gap in the corpus) and Q5 (Code of Practice definition — chunks pulled from CoP preambles rather than definitional sections). Both are corpus coverage issues, not synthesis failures.
 
 ---
 
 ## Roadmap
 
-| Version | Planned Improvements |
+| Version | Planned |
 |---|---|
-| **v2 corpus** | Expand to 20+ documents per domain; add modern awards, state-based safety regulations (NSW, VIC), and Fair Work Commission recent decisions |
-| **HealthNav expansion** | Add WorkSafe VIC and SafeWork NSW guidance; include return-to-work coordinator obligations and rehabilitation provider frameworks |
-| **Microsoft Fabric integration** | Move vector index and run logs to Fabric OneLake; enable Fabric Eventhouse for real-time query telemetry and corpus refresh pipelines |
-| **Cortex Analyst layer** | Cross-platform natural language query layer over structured compliance metadata — enabling trend queries ("what topics are users asking about most?") alongside the document RAG path |
+| **v2 corpus** | Expand to 20+ documents per domain; modern awards, state-based safety regulations (NSW, VIC), Fair Work Commission decisions |
+| **HealthNav expansion** | Add WorkSafe VIC and SafeWork NSW; return-to-work coordinator obligations |
+| **Microsoft Fabric integration** | Move vector index and run logs to Fabric OneLake; Fabric Eventhouse for real-time query telemetry |
+| **ReAct reflection loop** | Post-retrieval confidence check with targeted follow-up retrieval before synthesis |
 
 ---
 
@@ -171,6 +208,6 @@ Every query run is appended as a structured JSON record to `logs/run_log.jsonl` 
 Built by **Raj Prasannakumar** — BrickByData / ModernAnalyticsLab
 
 - LinkedIn: [linkedin.com/in/rajprasannakumar](https://linkedin.com/in/rajprasannakumar)
-- GitHub: [github.com/rajprasannakumar](https://github.com/rajprasannakumar)
+- GitHub: [github.com/rajesh5983](https://github.com/rajesh5983)
 
-WorkerShield v1 is a portfolio project demonstrating production-grade agentic RAG architecture for Australian workplace compliance. It is not legal advice.
+WorkerShield v1 is a portfolio project demonstrating production-grade agentic RAG architecture. It is not legal advice.

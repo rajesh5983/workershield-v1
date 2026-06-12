@@ -89,6 +89,35 @@ def _build_context(state: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Refusal threshold
+# ---------------------------------------------------------------------------
+
+# Calibrated against observed score distributions:
+# out-of-scope queries score avg~0.58 / max~0.62; in-scope queries avg~0.74 / max~0.77.
+# Thresholds sit in the gap: both must be true to trigger refusal.
+_REFUSAL_AVG_THRESHOLD = 0.65
+_REFUSAL_MAX_THRESHOLD = 0.70
+
+_REFUSAL_ANSWER = (
+    "I don't have enough information in my source documents to answer this confidently. "
+    "This question may be outside the scope of the WHS, Fair Work, and occupational health "
+    "documents WorkerShield currently covers (SafeShift, FairDesk, HealthNav domains). "
+    "For authoritative guidance, consult the relevant regulator directly: "
+    "Safe Work Australia, Fair Work Ombudsman, or your state WHS regulator."
+)
+
+
+def _is_below_refusal_threshold(all_chunks: list[dict]) -> bool:
+    """Return True when retrieval confidence is too low to synthesise reliably."""
+    if not all_chunks:
+        return True
+    scores = [c.get("score", 0.0) for c in all_chunks]
+    avg_score = sum(scores) / len(scores)
+    max_score = max(scores)
+    return avg_score < _REFUSAL_AVG_THRESHOLD and max_score < _REFUSAL_MAX_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
 # Confidence scorer
 # ---------------------------------------------------------------------------
 
@@ -156,14 +185,46 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
         len(all_chunks), cross_domain, len(synthesis_input),
     )
 
+    # ── Refusal threshold ─────────────────────────────────────────────────────
+    if _is_below_refusal_threshold(all_chunks):
+        scores = [c.get("score", 0.0) for c in all_chunks] if all_chunks else [0.0]
+        avg_score = sum(scores) / len(scores)
+        max_score = max(scores)
+        logger.info(
+            "[synthesis] refusal threshold triggered: avg_score=%.4f max_score=%.4f",
+            avg_score, max_score,
+        )
+        refusal_structured: dict = {
+            "answer":               _REFUSAL_ANSWER,
+            "citations":            [],
+            "confidence":           "insufficient",
+            "cross_domain_connection": None,
+        }
+        return {
+            "synthesis_input": synthesis_input,
+            "final_answer":    json.dumps(refusal_structured, ensure_ascii=False, indent=2),
+            "citations":       [],
+            "confidence":      "insufficient",
+        }
+
     # ── LLM call ─────────────────────────────────────────────────────────────
     try:
         llm = ModelFactory().get_synthesis_llm()
         logger.info("[synthesis] provider=%s model=%s", llm.provider, llm.model)
         raw    = llm.chat(_SYSTEM_PROMPT, synthesis_input)
         parsed = parse_llm_json(raw) or {"answer": raw, "citations": []}
+
+        # Sonnet sometimes nests its full structured response as a JSON string
+        # inside the "answer" field instead of at the top level.  Unwrap it.
+        answer_val = parsed.get("answer", "")
+        if isinstance(answer_val, str) and answer_val.strip().startswith("{"):
+            inner = parse_llm_json(answer_val)
+            if inner and "answer" in inner:
+                logger.info("[synthesis] unwrapped double-encoded response")
+                parsed = inner
+
         if "confidence" not in parsed:
-            logger.warning("[synthesis] model returned plain text (no JSON); using chunk-based confidence. raw=%r", raw[:120])
+            logger.warning("[synthesis] model omitted confidence field; deriving from chunk scores. raw=%r", raw[:120])
     except Exception as exc:
         logger.error("[synthesis] API call failed: %s", exc)
         parsed = {

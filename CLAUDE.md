@@ -1,5 +1,16 @@
 # WorkerShield v1 — Claude Code Project Context
 
+## Current Status (as at 2026-06-12)
+
+v1 is complete and demo-ready.
+
+- **Corpus ingested:** 9 registered documents → 10 doc_ids (SS03 split into SS03a/SS03b), 1,268 vectors in Qdrant collection `workershield`.
+- **Agents built:** `router_node` (Haiku + keyword fallback), `safeshift_node`, `fairdesk_node`, `healthnav_node` (Qdrant retrievers with Phoenix OTEL spans), `synthesis_node` (Sonnet with refusal threshold — avg < 0.65 AND max < 0.70 → `confidence="insufficient"`), `output_node` (JSONL log).
+- **RAGAS evaluation complete:** 8-query golden dataset, OpenAI GPT-4o-mini judge. Faithfulness 0.894 ✅, Context Precision 0.750 ✅, Context Recall 0.750 ✅, Answer Relevancy 0.639 ⚠️. Results in `tests/ragas_results.json` and `tests/RAGAS_RESULTS.md`.
+- **Phoenix tracing active:** Every query traces to `http://192.168.100.10:6006` via Arize Phoenix OTEL auto-instrumentation on the Anthropic SDK.
+- **Gradio UI live:** `ui/app.py` on port 7860. Anthropic-only stack (Haiku router + Sonnet synthesis). Confidence badge supports `high`/`medium`/`low`/`insufficient` (grey OUT OF SCOPE badge for refusals). `launch.sh` as the entry point.
+- **Known gap:** `parse_llm_json` Pass 3 (`_heal_inner_quotes`) and `max_tokens=4096` fix a Sonnet double-encoding bug that appeared on complex multi-domain responses. Do not revert these.
+
 ## Project
 
 WorkerShield is an agentic RAG platform providing cited, practical guidance across three

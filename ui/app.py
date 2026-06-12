@@ -37,9 +37,10 @@ _DOMAIN_COLOURS = {
 }
 
 _CONFIDENCE_STYLES = {
-    "high":   ("HIGH",   "#166534", "#DCFCE7"),
-    "medium": ("MEDIUM", "#92400E", "#FEF3C7"),
-    "low":    ("LOW",    "#991B1B", "#FEE2E2"),
+    "high":         ("HIGH",        "#166534", "#DCFCE7"),
+    "medium":       ("MEDIUM",      "#92400E", "#FEF3C7"),
+    "low":          ("LOW",         "#991B1B", "#FEE2E2"),
+    "insufficient": ("OUT OF SCOPE","#374151", "#F3F4F6"),
 }
 
 # ---------------------------------------------------------------------------
