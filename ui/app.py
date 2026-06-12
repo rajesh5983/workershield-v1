@@ -9,6 +9,7 @@ a confidence indicator, and the active model stack summary.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -40,6 +41,27 @@ _CONFIDENCE_STYLES = {
     "medium": ("MEDIUM", "#92400E", "#FEF3C7"),
     "low":    ("LOW",    "#991B1B", "#FEE2E2"),
 }
+
+# ---------------------------------------------------------------------------
+# RAGAS evaluation data — loaded once at startup
+# ---------------------------------------------------------------------------
+
+_RAGAS_PATH = Path(__file__).parent.parent / "tests" / "ragas_results.json"
+
+_RAGAS_TARGETS = {
+    "faithfulness":      ("Faithfulness",      0.85),
+    "context_precision": ("Context Precision", 0.70),
+    "context_recall":    ("Context Recall",    0.70),
+    "answer_relevancy":  ("Answer Relevancy",  0.80),
+}
+
+def _load_ragas_data() -> dict:
+    try:
+        return json.loads(_RAGAS_PATH.read_text())
+    except Exception:
+        return {}
+
+_RAGAS_DATA = _load_ragas_data()
 
 # ---------------------------------------------------------------------------
 # Example queries
@@ -122,6 +144,13 @@ _CSS = """
 #model-status td    { padding:5px 10px; border-bottom:1px solid #F1F5F9; }
 #model-status tr:last-child td { border-bottom:none; }
 
+/* ── RAGAS evaluation table ──────────────────────────────────────────────── */
+#ragas-table table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+#ragas-table th    { background:#F1F5F9; font-weight:600; padding:6px 10px;
+                     text-align:left; border-bottom:1px solid #E2E8F0; }
+#ragas-table td    { padding:5px 10px; border-bottom:1px solid #F1F5F9; }
+#ragas-table tr:last-child td { border-bottom:none; }
+
 /* ── example buttons ─────────────────────────────────────────────────────── */
 .ws-example { font-size:0.82rem !important; }
 
@@ -182,6 +211,86 @@ def _citations_html(citations: list[dict]) -> str:
         "</tr></thead><tbody>"
     )
     return f'<div id="citations-table">{header}{"".join(rows)}</tbody></table></div>'
+
+
+def _ragas_html() -> str:
+    """Render the static RAGAS scores table + Phoenix tracing link."""
+    agg = _RAGAS_DATA.get("aggregates", {})
+    rows = []
+    for key, (label, target) in _RAGAS_TARGETS.items():
+        val = agg.get(key)
+        if val is None:
+            score_str   = "N/A"
+            status_html = (
+                '<span style="background:#F1F5F9;color:#64748B;padding:2px 8px;'
+                'border-radius:6px;font-size:0.75rem;">N/A</span>'
+            )
+        else:
+            score_str = f"{val:.2f}"
+            if val >= target:
+                status_html = (
+                    '<span style="background:#DCFCE7;color:#166534;padding:3px 10px;'
+                    'border-radius:6px;font-size:0.78rem;font-weight:700;">✅ Pass</span>'
+                )
+            else:
+                status_html = (
+                    '<span style="background:#FEF3C7;color:#92400E;padding:3px 10px;'
+                    'border-radius:6px;font-size:0.78rem;font-weight:700;">⚠️ Low</span>'
+                )
+        rows.append(
+            f"<tr>"
+            f"<td style='font-weight:500;'>{label}</td>"
+            f"<td style='font-family:monospace;font-size:0.88rem;'>{score_str}</td>"
+            f"<td style='color:#64748B;'>&gt;{target:.2f}</td>"
+            f"<td>{status_html}</td>"
+            f"</tr>"
+        )
+
+    table = (
+        '<div id="ragas-table">'
+        "<table><thead><tr>"
+        "<th>Metric</th><th>Score</th><th>Target</th><th>Status</th>"
+        "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+    )
+
+    phoenix_block = (
+        '<div style="margin-top:16px;padding:12px 14px;background:#F8FAFC;'
+        'border-radius:8px;border:1px solid #E2E8F0;">'
+        '<p style="margin:0 0 6px;font-weight:600;font-size:0.85rem;color:#1B3A6B;">'
+        'Live Tracing</p>'
+        '<a href="http://192.168.100.10:6006" target="_blank" '
+        'style="color:#0F766E;font-weight:600;font-size:0.88rem;text-decoration:none;">'
+        'View live trace for this query in Phoenix →</a>'
+        '<p style="margin:8px 0 0;font-size:0.78rem;color:#64748B;">'
+        'Every query generates traces showing router decisions, retrieval scores '
+        'per domain, and synthesis token usage.'
+        '</p>'
+        '</div>'
+    )
+
+    return table + phoenix_block
+
+
+def _methodology_html() -> str:
+    """Render the static evaluation methodology note."""
+    judge    = _RAGAS_DATA.get("judge_llm", "gpt-4o-mini (OpenAI)")
+    ts       = _RAGAS_DATA.get("timestamp", "")
+    ts_label = ts[:10] if ts else "—"
+    return (
+        '<div style="font-size:0.85rem;line-height:1.75;color:#475569;">'
+        '<p style="margin:0 0 6px;">Scores generated using the '
+        '<strong>RAGAS framework</strong> against an 8-query golden dataset '
+        'covering all three domains (SafeShift · FairDesk · HealthNav).</p>'
+        f'<p style="margin:0 0 6px;"><strong>Judge model:</strong> {judge} &nbsp;·&nbsp; '
+        f'<strong>Run date:</strong> {ts_label}</p>'
+        '<p style="margin:0;"><strong>Application stack:</strong> '
+        'Claude Haiku (routing) + Claude Sonnet (synthesis). '
+        'Judge kept on a separate OpenAI stack so evaluation inference is '
+        'independent of the production stack.</p>'
+        '</div>'
+    )
 
 
 def _model_status_html(
@@ -343,6 +452,12 @@ with gr.Blocks(title="WorkerShield") as demo:
 
             with gr.Accordion("Run summary", open=False):
                 model_status_html = gr.HTML(_model_status_html())
+
+            with gr.Accordion("Evaluation & Observability", open=False):
+                gr.HTML(_ragas_html())
+
+            with gr.Accordion("About this evaluation", open=False):
+                gr.HTML(_methodology_html())
 
     # ── Event wiring ────────────────────────────────────────────────────────
 
