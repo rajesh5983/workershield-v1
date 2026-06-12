@@ -17,7 +17,7 @@ load_dotenv("/projects/workershield-v1/.env")
 import gradio as gr  # noqa: E402 — must come after load_dotenv
 
 from agents.graph import build_graph  # noqa: E402
-from utils.model_factory import ModelFactory, set_model_provider  # noqa: E402
+from utils.model_factory import ModelFactory  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Compile graph once at startup
@@ -40,9 +40,6 @@ _CONFIDENCE_STYLES = {
     "medium": ("MEDIUM", "#92400E", "#FEF3C7"),
     "low":    ("LOW",    "#991B1B", "#FEE2E2"),
 }
-
-_STACK_LABELS = ["Anthropic", "OpenAI", "Local"]
-_STACK_PROVIDERS = {label: label.lower() for label in _STACK_LABELS}
 
 # ---------------------------------------------------------------------------
 # Example queries
@@ -230,7 +227,7 @@ def _model_status_html(
 # Graph invocation
 # ---------------------------------------------------------------------------
 
-def _run_query(query: str, stack_label: str):
+def _run_query(query: str):
     """Invoke the compiled graph and yield UI component updates."""
     if not query or not query.strip():
         yield (
@@ -241,9 +238,6 @@ def _run_query(query: str, stack_label: str):
             gr.HTML(_model_status_html()),
         )
         return
-
-    # Apply the selected stack before querying
-    set_model_provider(_STACK_PROVIDERS[stack_label])
 
     # Yield a "thinking" state immediately
     yield (
@@ -288,15 +282,6 @@ def _run_query(query: str, stack_label: str):
 
 
 # ---------------------------------------------------------------------------
-# Stack change handler
-# ---------------------------------------------------------------------------
-
-def _on_stack_change(stack_label: str) -> str:
-    set_model_provider(_STACK_PROVIDERS[stack_label])
-    return _model_status_html()
-
-
-# ---------------------------------------------------------------------------
 # UI layout
 # ---------------------------------------------------------------------------
 
@@ -307,6 +292,9 @@ with gr.Blocks(title="WorkerShield") as demo:
         '<div id="ws-header">'
         '<p id="ws-title">WorkerShield</p>'
         '<p id="ws-sub">Australian Workplace Compliance Assistant</p>'
+        '<p style="font-size:0.82rem;color:#94A3B8;margin:6px 0 0;">'
+        'Powered by Claude Haiku (routing) + Claude Sonnet (synthesis)'
+        '</p>'
         "</div>"
     )
 
@@ -318,15 +306,6 @@ with gr.Blocks(title="WorkerShield") as demo:
                 placeholder="e.g. What are my WHS obligations for remote workers?",
                 lines=2,
                 elem_id="query-box",
-            )
-
-            # ── Model stack selector ─────────────────────────────────────────
-            stack_dd = gr.Dropdown(
-                choices=_STACK_LABELS,
-                value="Anthropic",
-                label="Model Stack",
-                info="Anthropic: Haiku+Sonnet | OpenAI: GPT-4o-mini+GPT-4o | Local: Mistral+Mistral",
-                interactive=True,
             )
 
             with gr.Row():
@@ -371,13 +350,13 @@ with gr.Blocks(title="WorkerShield") as demo:
 
     submit_btn.click(
         fn=_run_query,
-        inputs=[query_box, stack_dd],
+        inputs=[query_box],
         outputs=outputs,
     )
 
     query_box.submit(
         fn=_run_query,
-        inputs=[query_box, stack_dd],
+        inputs=[query_box],
         outputs=outputs,
     )
 
@@ -391,12 +370,6 @@ with gr.Blocks(title="WorkerShield") as demo:
         ),
         inputs=[],
         outputs=outputs,
-    )
-
-    stack_dd.change(
-        fn=_on_stack_change,
-        inputs=[stack_dd],
-        outputs=[model_status_html],
     )
 
 
