@@ -1,7 +1,7 @@
 # WorkerShield RAGAS Evaluation Results
 
-**Run date:** 2026-06-12T14:19:55.751620+00:00
-**Total run time:** 1049.9s
+**Run date:** 2026-06-14T00:50:05.257113+00:00
+**Total run time:** 1128.7s
 
 ## Provider Configuration
 
@@ -9,7 +9,7 @@
 |---|---|---|
 | App router | `anthropic` | `claude-haiku-4-5-20251001` |
 | App synthesis | `anthropic` | `claude-sonnet-4-6` |
-| Retrieval mode | — | `hybrid` |
+| Retrieval mode | — | `hybrid_reranked` |
 | RAGAS judge LLM | OpenAI | `gpt-4o-mini` |
 | RAGAS judge embeddings | OpenAI | `text-embedding-3-small` |
 
@@ -58,16 +58,16 @@ Scores range from 0.0 (worst) to 1.0 (best).
 
 | Query | Faithfulness | Context Precision | Context Recall | Answer Relevancy |
 |---|---|---|---|---|
-| Q1 | 0.2000 ← low | 0.9667 | 1.0000 | 0.0000 ← low |
-| Q2 | 0.9091 | 1.0000 | 0.0000 ← low | 0.0000 ← low |
-| Q3 | 0.9429 | 0.6917 | 1.0000 | 0.8337 |
-| Q4 | 1.0000 | 0.4013 ← low | 1.0000 | 0.9587 |
-| Q5 | 0.0000 ← low | 0.3333 ← low | 1.0000 | 0.0000 ← low |
-| Q6 | 0.9048 | 0.8333 | 1.0000 | 0.8405 |
-| Q7 | 0.5455 | 1.0000 | 1.0000 | 0.6257 |
-| Q8 | 1.0000 | 1.0000 | 1.0000 | 0.9421 |
+| Q1 | 0.4000 ← low | 0.9667 | 1.0000 | 0.0000 ← low |
+| Q2 | 0.8235 | 1.0000 | 0.0000 ← low | 0.0000 ← low |
+| Q3 | 1.0000 | 0.6917 | 1.0000 | 0.8121 |
+| Q4 | 1.0000 | N/A ⚠ | 1.0000 | 0.9587 |
+| Q5 | 0.0000 ← low | 0.0000 ← low | 0.0000 ← low | 0.0000 ← low |
+| Q6 | 1.0000 | 0.8333 | 1.0000 | 0.8525 |
+| Q7 | 1.0000 | 1.0000 | 1.0000 | 0.6873 |
+| Q8 | 0.9487 | 1.0000 | 1.0000 | 0.9199 |
 | **---** | **---** | **---** | **---** | **---** |
-| **AVG** | **0.6878** | **0.7783** | **0.8750** | **0.5251** |
+| **AVG** | **0.7715** | **0.7845** | **0.7500** | **0.5288** |
 
 ---
 

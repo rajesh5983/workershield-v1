@@ -1,6 +1,11 @@
 model_provider: anthropic
 retrieval_mode: hybrid  # dense_only | hybrid
 
+reranker:
+  enabled: true
+  model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  top_n_per_domain: 3
+
 anthropic:
   router: claude-haiku-4-5-20251001
   synthesis: claude-sonnet-4-6

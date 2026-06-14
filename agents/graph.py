@@ -38,6 +38,7 @@ from agents.router import router_node as _router_node
 from agents.synthesis import synthesis_node as _synthesis_node
 from observability.phoenix_setup import setup_phoenix
 from utils.model_factory import get_model_config
+from utils.reranker import get_reranker
 
 load_dotenv()
 
@@ -429,7 +430,48 @@ _DOMAIN_NODES = {
 
 
 def synthesis_node(state: WorkerShieldState) -> dict[str, Any]:
-    """Delegate to agents.synthesis which owns the full synthesis logic."""
+    """Apply cross-encoder reranking (if enabled), then delegate to agents.synthesis."""
+    reranker_cfg = get_model_config().get("reranker", {})
+    rerank_enabled = reranker_cfg.get("enabled", False)
+    top_n = reranker_cfg.get("top_n_per_domain", 3)
+
+    with _retrieval_tracer.start_as_current_span("workershield.rerank") as span:
+        if rerank_enabled:
+            domain_chunks: dict[str, list[dict]] = {}
+            if state.get("safeshift_chunks"):
+                domain_chunks["safeshift"] = state["safeshift_chunks"]
+            if state.get("fairdesk_chunks"):
+                domain_chunks["fairdesk"] = state["fairdesk_chunks"]
+            if state.get("healthnav_chunks"):
+                domain_chunks["healthnav"] = state["healthnav_chunks"]
+
+            if domain_chunks:
+                reranker = get_reranker()
+                reranked = reranker.rerank_by_domain(state["query"], domain_chunks, top_n=top_n)
+
+                # Shallow-copy state so we don't mutate the LangGraph-owned dict
+                state = dict(state)
+                state["safeshift_chunks"] = reranked.get("safeshift", [])
+                state["fairdesk_chunks"]  = reranked.get("fairdesk", [])
+                state["healthnav_chunks"] = reranked.get("healthnav", [])
+
+                all_reranked = [c for chunks in reranked.values() for c in chunks]
+                top_score = max((c.get("rerank_score", 0.0) for c in all_reranked), default=0.0)
+                logger.info(
+                    "[rerank] domains=%s top_score=%.4f chunks_per_domain=%s",
+                    list(reranked.keys()),
+                    top_score,
+                    {d: len(cs) for d, cs in reranked.items()},
+                )
+                span.set_attribute("workershield.rerank_applied", True)
+                span.set_attribute("workershield.top_rerank_score", top_score)
+            else:
+                span.set_attribute("workershield.rerank_applied", False)
+                span.set_attribute("workershield.top_rerank_score", 0.0)
+        else:
+            span.set_attribute("workershield.rerank_applied", False)
+            span.set_attribute("workershield.top_rerank_score", 0.0)
+
     return _synthesis_node(state)
 
 

@@ -14,3 +14,4 @@ requests
 arize-phoenix
 arize-phoenix-otel
 openinference-instrumentation-anthropic
+sentence-transformers

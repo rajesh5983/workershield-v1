@@ -323,6 +323,8 @@ def run_evaluation() -> None:
           f"{(t_eval_done - t_graph_done):.1f}s RAGAS eval)")
 
     retrieval_mode = cfg.get("retrieval_mode", "dense_only")
+    reranker_enabled = cfg.get("reranker", {}).get("enabled", False)
+    retrieval_label = f"{retrieval_mode}_reranked" if reranker_enabled else retrieval_mode
 
     # ── Save JSON results ─────────────────────────────────────────────────────
     ts_now = datetime.now(timezone.utc)
@@ -331,7 +333,7 @@ def run_evaluation() -> None:
         "model_provider":     model_provider,
         "router_model":       router_model,
         "synthesis_model":    synth_model,
-        "retrieval_mode":     retrieval_mode,
+        "retrieval_mode":     retrieval_label,
         "judge_llm":          "gpt-4o-mini (OpenAI)",
         "judge_embeddings":   "text-embedding-3-small (OpenAI)",
         "metrics":            METRIC_KEYS,
@@ -349,13 +351,13 @@ def run_evaluation() -> None:
     date_str      = ts_now.strftime("%Y-%m-%d")
     history_dir   = Path(__file__).parent / "ragas_history"
     history_dir.mkdir(exist_ok=True)
-    history_label = f"{retrieval_mode}_{date_str}"
+    history_label = f"{retrieval_label}_{date_str}"
     history_path  = history_dir / f"{history_label}.json"
     history_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
     print(f"Archived to        : {history_path}")
 
     # Append row to COMPARISON.md
-    _append_comparison_row(history_dir, date_str, retrieval_mode, aggregates)
+    _append_comparison_row(history_dir, date_str, retrieval_label, aggregates)
 
     # ── Generate RAGAS_RESULTS.md ─────────────────────────────────────────────
     _write_markdown(output, per_query, aggregates, total_time)
