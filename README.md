@@ -27,13 +27,14 @@ flowchart LR
     User(["User Query"])
     UI["Gradio UI\nlocalhost:7860"]
     Router["router_node\nClaude Haiku"]
-    SS["safeshift_node"]
-    FD["fairdesk_node"]
-    HN["healthnav_node"]
+    SS["safeshift_node\nhybrid RRF"]
+    FD["fairdesk_node\nhybrid RRF"]
+    HN["healthnav_node\nhybrid RRF"]
     IC["incident_check_node\nMCP client"]
-    Synth["synthesis_node\nClaude Sonnet\n+ refusal threshold"]
+    Reranker["WorkerShieldReranker\nms-marco-MiniLM-L-6-v2\ntop-3 per domain · CPU"]
+    Synth["synthesis_node\nClaude Sonnet\nmode-aware refusal threshold"]
     Out["output_node"]
-    Qdrant[("Qdrant :6333\n1,268 vectors")]
+    Qdrant[("Qdrant :6333\n1,268 vectors\ndense + sparse")]
     Ollama["Ollama :11434\nnomic-embed-text"]
     Phoenix["Phoenix :6006\ntracing"]
     MCP["MCP Server\nincident_server.py"]
@@ -45,24 +46,25 @@ flowchart LR
     Router -->|fairdesk| FD
     Router -->|healthnav| HN
     Router -->|"incident keywords"| IC
-    SS & FD & HN & IC --> Synth
+    SS & FD & HN --> Reranker
+    IC --> Synth
+    Reranker --> Synth
     Synth -->|"answer + citations"| Out
     Out --> UI
     UI --> User
 
-    Qdrant -.->|domain-filtered\nvector search| SS
-    Qdrant -.->|domain-filtered\nvector search| FD
-    Qdrant -.->|domain-filtered\nvector search| HN
-    Ollama -.->|embed query| SS
-    Ollama -.->|embed query| FD
-    Ollama -.->|embed query| HN
+    Qdrant -.->|"RRF fusion\ndense+BM25"| SS
+    Qdrant -.->|"RRF fusion\ndense+BM25"| FD
+    Qdrant -.->|"RRF fusion\ndense+BM25"| HN
+    Ollama -.->|embed| SS & FD & HN
     MCP -.->|stdio| IC
     SQLite -.->|SQL| MCP
-    Phoenix -.->|LLM traces| Router
-    Phoenix -.->|LLM traces| Synth
+    Phoenix -.->|traces| Router
+    Phoenix -.->|traces| Reranker
+    Phoenix -.->|traces| Synth
 ```
 
-The graph implements a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through: `router_node → domain retriever(s) + optional incident_check_node → synthesis_node → output_node`. A conditional edge after the router fans out to all three domain nodes when `cross_domain = True`, or only the detected subset otherwise. When the query mentions incident counts, trends, or history, `incident_check_node` fires in parallel via an MCP client call to the local SQLite incident database. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full design detail.
+The graph implements a LangGraph `StateGraph` with a single typed state object (`WorkerShieldState`) flowing through: `router_node → domain retriever(s) + optional incident_check_node → WorkerShieldReranker → synthesis_node → output_node`. Retrieval is a three-pass pipeline: hybrid dense+BM25 RRF fusion via Qdrant, cross-encoder reranking to top-3 per domain, then Sonnet synthesis. A conditional edge after the router fans out to all three domain nodes when `cross_domain = True`. When the query mentions incident counts or trends, `incident_check_node` fires in parallel. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full design detail.
 
 ---
 
@@ -97,22 +99,25 @@ All sources are Australian open government publications (Safe Work Australia, Fa
 
 **Cross-domain agentic routing** — Claude Haiku classifies each query across all three domains with a JSON-structured prompt. When a query spans multiple regulatory frameworks, `cross_domain = True` fans out to all three Qdrant partitions simultaneously via LangGraph `Send` primitives.
 
-**Citation-grounded synthesis** — Claude Sonnet synthesises answers exclusively from retrieved chunks. Every claim is annotated with a `[doc_id]` inline citation; the UI renders a structured sources table below the answer.
+**Three-pass retrieval pipeline** — Each domain retriever runs hybrid dense + BM25 sparse retrieval fused via Reciprocal Rank Fusion (RRF) in Qdrant, producing a wider candidate pool than dense-only search. A cross-encoder (`ms-marco-MiniLM-L-6-v2`, CPU inference) then re-scores every candidate pair against the query and keeps the top-3 per domain by logit score — eliminating noisy RRF candidates before synthesis.
 
-**Refusal threshold for out-of-scope queries** — Before calling the synthesis LLM, the system checks average and maximum retrieval scores across all returned chunks. If `avg_score < 0.65` AND `max_score < 0.70` (both conditions), the LLM call is skipped and a structured refusal is returned (`confidence = "insufficient"`), directing the user to the relevant regulator. Thresholds are calibrated against observed score distributions: off-topic queries score avg ~0.58 / max ~0.62; in-scope queries score avg ~0.74 / max ~0.77.
+**Citation-grounded synthesis** — Claude Sonnet synthesises answers exclusively from the reranked chunks. Every claim is annotated with a `[doc_id]` inline citation; the UI renders a structured sources table below the answer.
 
-**RAGAS-evaluated quality** — The system is evaluated against an 8-query golden dataset using the RAGAS framework with an OpenAI GPT-4o-mini judge (independent of the production stack). See [`tests/RAGAS_RESULTS.md`](tests/RAGAS_RESULTS.md) for full results.
+**Mode-aware refusal threshold** — Before calling the synthesis LLM, the system checks retrieval confidence using the right score scale for the active retrieval mode. When the cross-encoder reranker has run, the refusal decision uses cross-encoder logit scores (proceed if max logit > 0.0; refuse if < −1.0). In dense-only mode, the original cosine similarity thresholds apply (`avg < 0.65 AND max < 0.70`). The correct path is logged on every query. Out-of-scope queries return `confidence = "insufficient"` and direct the user to the relevant regulator.
 
-| Metric | Score | Target |
-|---|---|---|
-| Faithfulness | **0.894** | ≥ 0.85 ✅ |
-| Context Precision | **0.750** | ≥ 0.70 ✅ |
-| Context Recall | **0.750** | ≥ 0.70 ✅ |
-| Answer Relevancy | **0.639** | ≥ 0.80 ⚠️ |
+**RAGAS-evaluated quality** — The system is evaluated against an 8-query golden dataset using the RAGAS framework with an OpenAI GPT-4o-mini judge (independent of the production stack). Retrieval progression across three configurations:
+
+| Config | Faithfulness | Ctx Precision | Ctx Recall | Ans Relevancy |
+|---|---|---|---|---|
+| dense_only | 0.8938 | 0.7500 | 0.7500 | 0.6387 |
+| hybrid RRF | 0.6878 | 0.7783 | 0.8750 | 0.5251 |
+| **hybrid + reranker** (current) | **0.7331** | **0.7522** | **0.7500** | **0.5201** |
+
+See [`tests/RAGAS_RESULTS.md`](tests/RAGAS_RESULTS.md) and [`tests/ragas_history/COMPARISON.md`](tests/ragas_history/COMPARISON.md) for full results.
 
 **MCP incident database** — A FastMCP server (`mcp_server/incident_server.py`) exposes 50 synthetic incident records across all three domains as queryable tools (`query_incidents`, `get_incident_summary`, `get_incident_detail`). When the query mentions incident counts or trends, the `incident_check_node` calls the MCP server in parallel with domain retrieval; Sonnet weaves the statistics into the answer alongside document citations. The server is registered in Claude Code as `workershield-incidents`.
 
-**Phoenix observability tracing** — Every query generates OpenTelemetry traces via Arize Phoenix, capturing router decisions, per-domain retrieval scores, embedding latency, and synthesis token usage. Traces are viewable at `http://localhost:6006`.
+**Phoenix observability tracing** — Every query generates OpenTelemetry traces via Arize Phoenix, capturing router decisions, per-domain retrieval scores (including embedding time, sparse embed time, and RRF fusion indicator), cross-encoder rerank scores, and synthesis token usage. Traces are viewable at `http://localhost:6006`.
 
 ---
 
@@ -173,14 +178,17 @@ The fifth query is the primary cross-domain demo. The sixth demonstrates the MCP
 | Agent framework | LangGraph `StateGraph` | Directed graph with typed shared state and parallel fan-out |
 | Router LLM | Claude Haiku (`claude-haiku-4-5-20251001`) | Lightweight domain classification, JSON output |
 | Synthesis LLM | Claude Sonnet (`claude-sonnet-4-6`) | Multi-document cited answer generation |
-| Vector store | Qdrant — Docker, `localhost:6333` | Domain-partitioned retrieval via payload filters |
-| Embedding model | Ollama `nomic-embed-text` (768d) | Local query and ingest embeddings |
+| Vector store | Qdrant — Docker, `localhost:6333` | Domain-partitioned retrieval; `text-dense` + `text-sparse` named vectors |
+| Dense embeddings | Ollama `nomic-embed-text` (768d) | Local query and ingest embeddings |
+| Sparse embeddings | fastembed `Qdrant/bm25` | BM25 sparse vectors for hybrid retrieval |
+| Retrieval mode | Hybrid RRF — dense + BM25 fused | Wider candidate pool; Qdrant REST query with `{"fusion": "rrf"}` |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Third-pass cross-encoder reranking; top-3 per domain; CPU inference |
 | Incident database | SQLite `data/incidents.db` | 50 synthetic incident records across 3 domains |
 | MCP server | FastMCP `mcp_server/incident_server.py` | Exposes incident DB as 3 tools over stdio transport |
 | Chunk strategy | Sliding window — 400 tokens, 50 overlap | Applied per document; see CHUNKING_DECISIONS.md |
 | Demo UI | Gradio `ui/app.py` | Browser query interface at `localhost:7860` |
-| Evaluation | RAGAS + OpenAI GPT-4o-mini judge | Offline quality evaluation against golden dataset |
-| Observability | Arize Phoenix + OTEL | Live LLM tracing at `localhost:6006` |
+| Evaluation | RAGAS + OpenAI GPT-4o-mini judge | Offline quality evaluation against 8-query golden dataset |
+| Observability | Arize Phoenix + OTEL | Live LLM + reranker tracing at `localhost:6006` |
 
 ---
 
@@ -201,7 +209,7 @@ The fifth query is the primary cross-domain demo. The sixth demonstrates the MCP
 - **Corpus coverage.** v1 covers 10 doc_ids across 3 domains, with QLD-centric WHS sources. Modern award specifics, state-based WHS regulations outside QLD, and workers compensation schemes outside Queensland are not covered.
 - **No conversation memory.** Each query is processed independently; follow-up questions cannot reference prior answers. Stateless by design for compliance audit trail clarity.
 - **Single-pass retrieval.** No ReAct reflection loop — retrieval and synthesis happen once per query. Ambiguous queries cannot trigger follow-up retrievals.
-- **Answer Relevancy gap.** RAGAS Answer Relevancy sits at 0.639 against a 0.80 target, driven primarily by Q2 (casual overtime on public holidays — a coverage gap in the corpus) and Q5 (Code of Practice definition — chunks pulled from CoP preambles rather than definitional sections). Both are corpus coverage issues, not synthesis failures.
+- **Answer Relevancy gap.** RAGAS Answer Relevancy sits at 0.52 against a 0.80 target in the current hybrid+reranker configuration, driven primarily by Q2 (casual overtime on public holidays — a corpus coverage gap) and Q1/Q5 scoring variance from the GPT-4o-mini judge. These are corpus coverage and evaluation noise issues, not synthesis failures.
 
 ---
 

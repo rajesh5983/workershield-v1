@@ -4,7 +4,9 @@
 
 ## 1. System Overview
 
-WorkerShield is a three-domain agentic RAG platform for Australian workplace compliance. A LangGraph `StateGraph` orchestrates six node types — router, domain retrievers, incident check, synthesis, output — connected by conditional fan-out edges that activate one, two, or all three Qdrant partitions plus an optional MCP-backed incident statistics node. The synthesis node runs a pre-LLM refusal threshold check; queries whose retrieved chunks fall below calibrated confidence thresholds are declined gracefully rather than synthesised from weak evidence. Every query is traced end-to-end via Arize Phoenix.
+WorkerShield is a three-domain agentic RAG platform for Australian workplace compliance. A LangGraph `StateGraph` orchestrates six node types — router, domain retrievers, incident check, synthesis, output — connected by conditional fan-out edges that activate one, two, or all three Qdrant partitions plus an optional MCP-backed incident statistics node.
+
+Retrieval is a three-pass pipeline: (1) hybrid dense + BM25 sparse retrieval with Reciprocal Rank Fusion (RRF) via Qdrant, (2) cross-encoder reranking with `ms-marco-MiniLM-L-6-v2` that re-scores and trims each domain's candidates to the top-3 most query-relevant chunks, and (3) grounded synthesis by Claude Sonnet. The synthesis node runs a mode-aware refusal threshold before the LLM call — using the cross-encoder logit score (rather than the RRF fusion score) when the reranker has run, so the refusal decision is always calibrated against the right score distribution. Every query is traced end-to-end via Arize Phoenix.
 
 ---
 
@@ -15,15 +17,17 @@ flowchart LR
     User(["User Query"])
     UI["Gradio UI\nlocalhost:7860"]
     Router["router_node\nClaude Haiku\nJSON classification"]
-    SS["safeshift_node\nQdrant retriever"]
-    FD["fairdesk_node\nQdrant retriever"]
-    HN["healthnav_node\nQdrant retriever"]
+    SS["safeshift_node\nQdrant retriever\nhybrid RRF"]
+    FD["fairdesk_node\nQdrant retriever\nhybrid RRF"]
+    HN["healthnav_node\nQdrant retriever\nhybrid RRF"]
     IC["incident_check_node\nMCP client"]
+    Reranker["WorkerShieldReranker\ncross-encoder/ms-marco-MiniLM-L-6-v2\ntop-3 per domain · CPU"]
     Synth["synthesis_node\nClaude Sonnet"]
-    Threshold{{"Refusal\nThreshold"}}
+    Threshold{{"Mode-aware\nRefusal Threshold"}}
     Out["output_node\nJSONL log"]
-    Qdrant[("Qdrant :6333\ncollection: workershield\n1,268 vectors · 768-dim cosine")]
-    Ollama["Ollama :11434\nnomic-embed-text\n768d local embeddings"]
+    Qdrant[("Qdrant :6333\ncollection: workershield\n1,268 vectors\ndense + sparse named vectors")]
+    Ollama["Ollama :11434\nnomic-embed-text\n768d dense embeddings"]
+    BM25["fastembed\nQdrant/bm25\nBM25 sparse encoder"]
     Phoenix["Arize Phoenix :6006\nOTEL tracing"]
     MCP["MCP Server\nmcp_server/incident_server.py\nFastMCP stdio"]
     SQLite[("SQLite\ndata/incidents.db\n50 records · 3 domains")]
@@ -34,22 +38,28 @@ flowchart LR
     Router -->|"fairdesk"| FD
     Router -->|"healthnav"| HN
     Router -->|"incident keywords"| IC
-    SS & FD & HN & IC --> Synth
+    SS & FD & HN --> Reranker
+    IC --> Synth
+    Reranker --> Synth
     Synth --> Threshold
-    Threshold -->|"avg≥0.65 or max≥0.70\nnormal synthesis"| Out
-    Threshold -->|"avg<0.65 AND max<0.70\nrefusal response"| Out
+    Threshold -->|"rerank logit>0.0\nor dense avg≥0.65/max≥0.70"| Out
+    Threshold -->|"rerank logit<-1.0\nor dense avg<0.65 AND max<0.70"| Out
     Out -->|"answer + citations\nconfidence badge"| UI
     UI --> User
 
-    Qdrant -.->|domain-filtered search| SS
-    Qdrant -.->|domain-filtered search| FD
-    Qdrant -.->|domain-filtered search| HN
-    Ollama -.->|embed query| SS
-    Ollama -.->|embed query| FD
-    Ollama -.->|embed query| HN
+    Qdrant -.->|"RRF fusion\ndense + sparse"| SS
+    Qdrant -.->|"RRF fusion\ndense + sparse"| FD
+    Qdrant -.->|"RRF fusion\ndense + sparse"| HN
+    Ollama -.->|"dense embed"| SS
+    Ollama -.->|"dense embed"| FD
+    Ollama -.->|"dense embed"| HN
+    BM25 -.->|"sparse embed"| SS
+    BM25 -.->|"sparse embed"| FD
+    BM25 -.->|"sparse embed"| HN
     MCP -.->|stdio transport| IC
     SQLite -.->|SQL queries| MCP
     Phoenix -.->|OTEL spans| Router
+    Phoenix -.->|OTEL spans| Reranker
     Phoenix -.->|OTEL spans| Synth
 ```
 
@@ -98,9 +108,10 @@ stateDiagram-v2
     }
 
     state synthesis_node {
-        [*] --> refusal_check
-        refusal_check --> llm_call    : avg≥0.65 OR max≥0.70
-        refusal_check --> refusal_out : avg<0.65 AND max<0.70
+        [*] --> reranker
+        reranker --> refusal_check   : top-3 per domain · rerank_score added
+        refusal_check --> llm_call   : rerank logit>0.0\nor dense avg≥0.65/max≥0.70
+        refusal_check --> refusal_out: rerank logit<-1.0\nor dense avg<0.65 AND max<0.70
         llm_call --> [*]
         refusal_out --> [*]
     }
@@ -126,16 +137,33 @@ The router sets `cross_domain = True` conservatively — preferring over-retriev
 | Node | LLM / Tool | Key Logic |
 |---|---|---|
 | `router_node` | Claude Haiku | Sends the query with a JSON classification prompt; expects `{domains: [...], cross_domain: bool, reasoning: str}`. Falls back to keyword matching (`"WHS"` → `safeshift`, `"casual"` → `fairdesk`, etc.) when the model returns malformed output. |
-| `safeshift_node` | Qdrant + Ollama | Embeds the query via `nomic-embed-text` (768d). Queries Qdrant filtered by `domain=safeshift`. Returns top-K chunk dicts with score, text, doc_id, title, section. Wrapped in a custom OTEL span recording embed time and top-chunk score. |
-| `fairdesk_node` | Qdrant + Ollama | Same as above, filtered by `domain=fairdesk`. |
-| `healthnav_node` | Qdrant + Ollama | Same as above, filtered by `domain=healthnav`. |
+| `safeshift_node` | Qdrant + Ollama + fastembed | Embeds the query via `nomic-embed-text` (768d dense) and Qdrant/BM25 (sparse). Sends a hybrid RRF prefetch query to Qdrant filtered by `domain=safeshift`; returns top-K fused chunks. Wrapped in a custom OTEL span recording embed time, sparse embed time, fusion method, and top-chunk score. |
+| `fairdesk_node` | Qdrant + Ollama + fastembed | Same as above, filtered by `domain=fairdesk`. |
+| `healthnav_node` | Qdrant + Ollama + fastembed | Same as above, filtered by `domain=healthnav`. |
 | `incident_check_node` | MCP client → SQLite | Detects whether the query wants summary counts or a filtered list. Calls the MCP server via `mcp.client.stdio` (spawns `incident_server.py` as a subprocess). Returns `incident_data` list — either a summary dict or filtered records. Falls back to direct SQLite queries via `data/incidents_db.py` if MCP call fails. |
-| `synthesis_node` | Claude Sonnet | (1) Checks refusal threshold across all chunks. (2) If proceeding, assembles domain-labelled context + optional `── INCIDENT DATABASE ──` section. (3) Calls Sonnet with a strict JSON-output system prompt. (4) Post-processes: unwraps double-encoded responses, heals unescaped inner quotes, derives citations, computes confidence. |
+| `synthesis_node` | Claude Sonnet + CrossEncoder | (1) **Reranks** each domain's chunks using `WorkerShieldReranker` (cross-encoder/ms-marco-MiniLM-L-6-v2), keeping top-3 per domain by logit score. Adds `rerank_score` to each chunk dict; emits `workershield.rerank` OTEL span. (2) **Checks mode-aware refusal threshold** — uses `rerank_score` logit when available (proceeds if max > 0.0), falls back to dense cosine thresholds (avg < 0.65 AND max < 0.70) otherwise. (3) Assembles domain-labelled context + optional `── INCIDENT DATABASE ──` section. (4) Calls Sonnet with a strict JSON-output system prompt. (5) Post-processes: unwraps double-encoded responses, heals unescaped inner quotes, derives citations, computes confidence. |
 | `output_node` | None | Logs the run to `logs/run_log.jsonl`. No state mutation. |
 
 ### Refusal threshold
 
-Before the synthesis LLM call, `synthesis_node` checks:
+After reranking and before the synthesis LLM call, `_is_below_refusal_threshold()` selects the scoring path based on whether a `rerank_score` field is present in the chunks:
+
+**Path A — Reranker active (hybrid mode)**
+
+Cross-encoder logit scores from `ms-marco-MiniLM-L-6-v2` are used. These are unconstrained logits (not probabilities):
+
+```
+max_rerank = max(chunk["rerank_score"] for chunk in all_chunks)
+
+if max_rerank > 0.0:  → proceed with synthesis
+if max_rerank < -1.0: → skip LLM, return structured refusal (confidence="insufficient")
+```
+
+The 0.0 / −1.0 boundary sits between clearly borderline (+0.5 to +5 for relevant chunks) and genuinely off-topic (< −5). RRF fusion scores (0.33–0.50 range) are not used because they are reciprocal-rank–based and not comparable to similarity scores.
+
+**Path B — Dense-only mode**
+
+Original cosine similarity thresholds apply. Both conditions must be true to trigger refusal:
 
 ```
 avg_score = mean([chunk["score"] for chunk in all_chunks])
@@ -145,14 +173,15 @@ if avg_score < 0.65 AND max_score < 0.70:
     → skip LLM, return structured refusal with confidence="insufficient"
 ```
 
-Thresholds calibrated from observed score distributions:
+Calibrated from observed dense cosine score distributions:
 
 | Query type | avg_score | max_score |
 |---|---|---|
 | Out-of-scope (e.g. "capital of France") | ~0.58 | ~0.62 |
 | In-scope (e.g. "psychosocial hazards under WHS") | ~0.74 | ~0.77 |
 
-The gap between 0.62 and 0.74 gives clean separation with the chosen thresholds.
+A log line is emitted for every decision showing which path fired and the scores used:
+`[synthesis] refusal check — path=reranker  max_rerank_score=0.7631  refuse=False`
 
 ---
 
@@ -297,7 +326,7 @@ flowchart LR
 
     subgraph phoenix["Arize Phoenix — live tracing"]
         PhoenixUI["Phoenix UI\nlocalhost:6006\nOTEL trace viewer"]
-        Spans["Per-query spans:\n• router LLM call\n• qdrant.retrieve × domain\n• synthesis LLM call\n• embedding_time_ms\n• top_chunk_score\n• token usage"]
+        Spans["Per-query spans:\n• router LLM call\n• qdrant.retrieve × domain\n  (embed_ms, sparse_embed_ms,\n   fusion=RRF, top_chunk_score)\n• workershield.rerank\n  (rerank_applied, top_rerank_score)\n• synthesis LLM call\n• token usage"]
     end
 
     subgraph ragas["RAGAS — offline evaluation"]
@@ -319,16 +348,15 @@ flowchart LR
     Scores --> Results
 ```
 
-**RAGAS results summary (run date: 2026-06-12):**
+**RAGAS evaluation history (8-query golden dataset, GPT-4o-mini judge):**
 
-| Metric | Score | Target | Status |
-|---|---|---|---|
-| Faithfulness | 0.894 | ≥ 0.85 | ✅ |
-| Context Precision | 0.750 | ≥ 0.70 | ✅ |
-| Context Recall | 0.750 | ≥ 0.70 | ✅ |
-| Answer Relevancy | 0.639 | ≥ 0.80 | ⚠️ |
+| Date | Config | Faithfulness | Context Precision | Context Recall | Answer Relevancy |
+|---|---|---|---|---|---|
+| 2026-06-12 | dense_only | 0.8938 | 0.7500 | 0.7500 | 0.6387 |
+| 2026-06-12 | hybrid RRF | 0.6878 | 0.7783 | 0.8750 | 0.5251 |
+| 2026-06-14 | hybrid + reranker | 0.7331 | 0.7522 | 0.7500 | 0.5201 |
 
-Answer Relevancy misses target primarily on Q2 (casual overtime on public holidays — corpus coverage gap) and Q5 (Code of Practice definition — definitional chunks not surfacing). Both are retrieval corpus issues, not synthesis failures. See [`tests/RAGAS_RESULTS.md`](../tests/RAGAS_RESULTS.md) for the full per-query breakdown.
+Current active mode: `hybrid_reranked`. Answer Relevancy remains below the 0.80 target, driven primarily by Q2 (casual overtime on public holidays — corpus coverage gap). Q5 (Code of Practice definition) is now correctly answered following the refusal threshold fix. See [`tests/RAGAS_RESULTS.md`](../tests/RAGAS_RESULTS.md) and [`tests/ragas_history/COMPARISON.md`](../tests/ragas_history/COMPARISON.md) for full per-query breakdowns.
 
 ---
 
@@ -397,13 +425,20 @@ workershield-v1/
 ├── prompts/
 │   └── PROMPTS.md              # Router and synthesis prompt reference
 ├── tests/
-│   ├── ragas_eval.py           # RAGAS evaluation runner
-│   ├── ragas_results.json      # Raw scores (machine-readable)
-│   └── RAGAS_RESULTS.md        # Human-readable evaluation results
+│   ├── run_ragas_eval.py       # RAGAS evaluation runner
+│   ├── golden_dataset.py       # 8-query golden dataset with ground-truth answers
+│   ├── ragas_results.json      # Raw scores for the most recent run (machine-readable)
+│   ├── RAGAS_RESULTS.md        # Human-readable evaluation results (latest run)
+│   └── ragas_history/
+│       ├── COMPARISON.md       # Multi-run comparison table (all retrieval configs)
+│       ├── dense_only_*.json   # Archived dense-only run results
+│       ├── hybrid_*.json       # Archived hybrid RRF run results
+│       └── hybrid_reranked_*.json  # Archived hybrid + reranker run results
 ├── ui/
 │   └── app.py                  # Gradio demo interface — 5 example queries
 └── utils/
     ├── model_factory.py        # LLMClient + parse_llm_json (JSON healing)
+    ├── reranker.py             # WorkerShieldReranker — lazy CrossEncoder singleton
     ├── logger.py               # JSONL run logger
     └── log_reader.py           # Log summary viewer
 ```

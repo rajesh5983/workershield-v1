@@ -5,12 +5,15 @@
 v1 is complete and demo-ready.
 
 - **Corpus ingested:** 9 registered documents → 10 doc_ids (SS03 split into SS03a/SS03b), 1,268 vectors in Qdrant collection `workershield`.
-- **Agents built:** `router_node` (Haiku + keyword fallback), `safeshift_node`, `fairdesk_node`, `healthnav_node` (Qdrant retrievers with Phoenix OTEL spans), `incident_check_node` (MCP client → SQLite incident database, conditional on incident keywords), `synthesis_node` (Sonnet with refusal threshold — avg < 0.65 AND max < 0.70 → `confidence="insufficient"`), `output_node` (JSONL log).
+- **Agents built:** `router_node` (Haiku + keyword fallback), `safeshift_node`, `fairdesk_node`, `healthnav_node` (hybrid RRF retrievers — dense + BM25 fused via Qdrant REST, Phoenix OTEL spans), `incident_check_node` (MCP client → SQLite incident database, conditional on incident keywords), `synthesis_node` (cross-encoder reranking → mode-aware refusal threshold → Sonnet synthesis), `output_node` (JSONL log).
+- **Retrieval pipeline (3 passes):** (1) Hybrid dense + BM25 RRF fusion via Qdrant. (2) Cross-encoder reranking with `ms-marco-MiniLM-L-6-v2` — top-3 per domain by logit score, zero cost CPU inference. (3) Sonnet synthesis on reranked context.
+- **Mode-aware refusal threshold:** `_is_below_refusal_threshold()` uses reranker logit scores when `rerank_score` is present in chunks (proceed if max > 0.0; refuse if < −1.0). Falls back to dense cosine thresholds (avg < 0.65 AND max < 0.70) for dense-only mode. Fixes Q5 "Code of Practice" query which was incorrectly refused under RRF scores.
 - **MCP incident server:** `mcp_server/incident_server.py` exposes 3 tools (`query_incidents`, `get_incident_summary`, `get_incident_detail`) over stdio transport. Registered in Claude Code as `workershield-incidents`. Backed by `data/incidents.db` (50 synthetic records across all 3 domains, June 2025–June 2026).
-- **RAGAS evaluation complete:** 8-query golden dataset, OpenAI GPT-4o-mini judge. Faithfulness 0.894 ✅, Context Precision 0.750 ✅, Context Recall 0.750 ✅, Answer Relevancy 0.639 ⚠️. Results in `tests/ragas_results.json` and `tests/RAGAS_RESULTS.md`.
+- **RAGAS evaluation history:** 8-query golden dataset, OpenAI GPT-4o-mini judge. Current config (hybrid+reranker, 2026-06-14): Faithfulness 0.733, Context Precision 0.752, Context Recall 0.750, Answer Relevancy 0.520. Full history in `tests/ragas_history/COMPARISON.md`.
 - **Phoenix tracing active:** Every query traces to `http://192.168.100.10:6006` via Arize Phoenix OTEL auto-instrumentation on the Anthropic SDK.
 - **Gradio UI live:** `ui/app.py` on port 7860. Anthropic-only stack (Haiku router + Sonnet synthesis). Confidence badge supports `high`/`medium`/`low`/`insufficient` (grey OUT OF SCOPE badge for refusals). 5 example queries including incident-statistics demo. `launch.sh` as the entry point.
 - **Known gap:** `parse_llm_json` Pass 3 (`_heal_inner_quotes`) and `max_tokens=4096` fix a Sonnet double-encoding bug that appeared on complex multi-domain responses. Do not revert these.
+- **Reranker lazy singleton:** `utils/reranker.py` loads `ms-marco-MiniLM-L-6-v2` once per Python process via `get_reranker()`. Model weights download from HuggingFace on first run (~90 MB). Subsequent calls are instant. Do not instantiate `WorkerShieldReranker()` directly — always use `get_reranker()`.
 
 ## Project
 
@@ -28,8 +31,11 @@ firms evaluating Fabric Practice Lead candidates.
 | Component | Technology |
 |---|---|
 | Agent framework | LangGraph (`StateGraph`) |
-| Vector store | Qdrant — Docker, `localhost:6333`, collection: `workershield` |
-| Embedding model | Ollama `nomic-embed-text` — local, 768 dimensions |
+| Vector store | Qdrant — Docker, `localhost:6333`, collection: `workershield` (dense + sparse named vectors) |
+| Dense embeddings | Ollama `nomic-embed-text` — local, 768 dimensions |
+| Sparse embeddings | fastembed `Qdrant/bm25` — BM25 sparse encoder for hybrid retrieval |
+| Retrieval mode | Hybrid RRF — dense + BM25 fused via Qdrant REST `{"fusion": "rrf"}` |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` via sentence-transformers — CPU, top-3 per domain |
 | Router LLM | Claude Haiku via Anthropic API — JSON classification |
 | Synthesis LLM | Claude Sonnet 4 via Anthropic API — cited answers |
 | Incident database | SQLite — `data/incidents.db`, 50 synthetic records across 3 domains |
@@ -128,6 +134,7 @@ Conditional edge after `router_node`:
 | `mcp_server/incident_server.py` | FastMCP stdio server — exposes 3 incident query tools |
 | `mcp_server/README.md` | MCP server registration instructions |
 | `ui/app.py` | Gradio demo interface — 5 example queries |
+| `utils/reranker.py` | `WorkerShieldReranker` — lazy CrossEncoder singleton; `rerank()` and `rerank_by_domain()` |
 | `utils/logger.py` | JSONL run logging |
 | `utils/log_reader.py` | Log summary viewer |
 | `docs/ARCHITECTURE.md` | Full system architecture reference |
