@@ -139,11 +139,20 @@ def _build_context(state: dict[str, Any]) -> str:
 # Refusal threshold
 # ---------------------------------------------------------------------------
 
-# Calibrated against observed score distributions:
+# Dense-only thresholds — calibrated against cosine similarity score distributions:
 # out-of-scope queries score avg~0.58 / max~0.62; in-scope queries avg~0.74 / max~0.77.
-# Thresholds sit in the gap: both must be true to trigger refusal.
+# Both conditions must be true to trigger refusal.
 _REFUSAL_AVG_THRESHOLD = 0.65
 _REFUSAL_MAX_THRESHOLD = 0.70
+
+# Cross-encoder (ms-marco-MiniLM-L-6-v2) logit thresholds.
+# RRF fusion scores are reciprocal-rank–based (0.33–0.50 range for top-3 hits)
+# and are not comparable to cosine similarity. When a rerank_score is present
+# we use the cross-encoder logit instead.
+# Observed logit range: clearly relevant ~+0.5 to +5, borderline ~−1 to +0.5,
+# genuinely off-topic < −5. Threshold sits at 0.0 (proceed) / −1.0 (refuse).
+_RERANK_PROCEED_THRESHOLD = 0.0   # max logit above this → synthesise
+_RERANK_REFUSE_THRESHOLD  = -1.0  # max logit below this → refuse
 
 _REFUSAL_ANSWER = (
     "I don't have enough information in my source documents to answer this confidently. "
@@ -155,13 +164,36 @@ _REFUSAL_ANSWER = (
 
 
 def _is_below_refusal_threshold(all_chunks: list[dict]) -> bool:
-    """Return True when retrieval confidence is too low to synthesise reliably."""
+    """Return True when retrieval confidence is too low to synthesise reliably.
+
+    Uses cross-encoder rerank_score (logit scale) when the reranker has run,
+    falling back to the dense cosine similarity thresholds otherwise.
+    """
     if not all_chunks:
         return True
-    scores = [c.get("score", 0.0) for c in all_chunks]
-    avg_score = sum(scores) / len(scores)
-    max_score = max(scores)
-    return avg_score < _REFUSAL_AVG_THRESHOLD and max_score < _REFUSAL_MAX_THRESHOLD
+
+    rerank_scores = [c["rerank_score"] for c in all_chunks if "rerank_score" in c]
+
+    if rerank_scores:
+        max_rerank = max(rerank_scores)
+        refuse = max_rerank < _RERANK_REFUSE_THRESHOLD
+        logger.info(
+            "[synthesis] refusal check — path=reranker  max_rerank_score=%.4f  "
+            "proceed_threshold=%.1f  refuse_threshold=%.1f  refuse=%s",
+            max_rerank, _RERANK_PROCEED_THRESHOLD, _RERANK_REFUSE_THRESHOLD, refuse,
+        )
+        return refuse
+
+    qdrant_scores = [c.get("score", 0.0) for c in all_chunks]
+    avg_score = sum(qdrant_scores) / len(qdrant_scores)
+    max_score = max(qdrant_scores)
+    refuse = avg_score < _REFUSAL_AVG_THRESHOLD and max_score < _REFUSAL_MAX_THRESHOLD
+    logger.info(
+        "[synthesis] refusal check — path=dense  avg_score=%.4f  max_score=%.4f  "
+        "avg_threshold=%.2f  max_threshold=%.2f  refuse=%s",
+        avg_score, max_score, _REFUSAL_AVG_THRESHOLD, _REFUSAL_MAX_THRESHOLD, refuse,
+    )
+    return refuse
 
 
 # ---------------------------------------------------------------------------
@@ -234,13 +266,7 @@ def synthesis_node(state: dict[str, Any]) -> dict[str, Any]:
 
     # ── Refusal threshold ─────────────────────────────────────────────────────
     if _is_below_refusal_threshold(all_chunks):
-        scores = [c.get("score", 0.0) for c in all_chunks] if all_chunks else [0.0]
-        avg_score = sum(scores) / len(scores)
-        max_score = max(scores)
-        logger.info(
-            "[synthesis] refusal threshold triggered: avg_score=%.4f max_score=%.4f",
-            avg_score, max_score,
-        )
+        logger.info("[synthesis] refusal threshold triggered — returning insufficient")
         refusal_structured: dict = {
             "answer":               _REFUSAL_ANSWER,
             "citations":            [],

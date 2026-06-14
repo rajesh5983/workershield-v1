@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-14T00:50:05.257113+00:00",
+  "timestamp": "2026-06-14T01:58:00.243887+00:00",
   "model_provider": "anthropic",
   "router_model": "claude-haiku-4-5-20251001",
   "synthesis_model": "claude-sonnet-4-6",
@@ -12,7 +12,7 @@
     "context_recall",
     "answer_relevancy"
   ],
-  "total_time_seconds": 1128.7,
+  "total_time_seconds": 1143.2,
   "per_query": [
     {
       "query_num": 1,
@@ -22,8 +22,8 @@
         "healthnav"
       ],
       "detected_domains": [
-        "fairdesk",
-        "healthnav"
+        "healthnav",
+        "fairdesk"
       ],
       "expected_doc_ids": [
         "HN01",
@@ -32,7 +32,7 @@
       "answer_excerpt": "I don't have enough information in my source documents to answer this confidently. This question may be outside the scope of the WHS, Fair Work, and occupational health documents WorkerShield currentl",
       "context_count": 6,
       "scores": {
-        "faithfulness": 0.4,
+        "faithfulness": 0.0,
         "context_precision": 0.9667,
         "context_recall": 1.0,
         "answer_relevancy": 0.0
@@ -51,10 +51,10 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nThe rules around casual employee overtime on public holidays involve several intersecting considerations under the National Employment Standards (NES). ",
+      "answer_excerpt": "## Casual Employee Overtime on Public Holidays\n\nBased on the provided source documents, here is what applies to casual employees regarding public holidays and overtime:\n\n### Public Holiday Entitlement",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.8235,
+        "faithfulness": 0.6923,
         "context_precision": 1.0,
         "context_recall": 0.0,
         "answer_relevancy": 0.0
@@ -75,13 +75,13 @@
         "HN01",
         "SS03b"
       ],
-      "answer_excerpt": "## Psychosocial Hazards Under WHS Law\n\n### Your Core Legal Duty\n\nUnder Australian WHS law, a **PCBU (Person Conducting a Business or Undertaking)** has a primary duty to ensure, so far as is reasonabl",
+      "answer_excerpt": "## Psychosocial Hazards You Must Manage Under WHS Law\n\n### Who Holds Duties?\n\nUnder the WHS laws, **'health' is explicitly defined to include psychological as well as physical health**, meaning psycho",
       "context_count": 6,
       "scores": {
         "faithfulness": 1.0,
         "context_precision": 0.6917,
         "context_recall": 1.0,
-        "answer_relevancy": 0.8121
+        "answer_relevancy": 0.7773
       }
     },
     {
@@ -98,11 +98,11 @@
       "expected_doc_ids": [
         "HN03"
       ],
-      "answer_excerpt": "## Your Obligations When a Worker is Injured and Needs to Return to Work\n\nWhen a worker is injured and requires a return to work (RTW), your obligations span **workers' compensation law**, **WHS law**",
+      "answer_excerpt": "## Obligations When a Worker is Injured and Needs to Return to Work\n\nWhen a worker is injured and needs to return to work (RTW), you have obligations spanning workers' compensation law, WHS law, and F",
       "context_count": 9,
       "scores": {
         "faithfulness": 1.0,
-        "context_precision": null,
+        "context_precision": 0.5263,
         "context_recall": 1.0,
         "answer_relevancy": 0.9587
       }
@@ -120,10 +120,10 @@
         "SS01",
         "SS02"
       ],
-      "answer_excerpt": "I don't have enough information in my source documents to answer this confidently. This question may be outside the scope of the WHS, Fair Work, and occupational health documents WorkerShield currentl",
+      "answer_excerpt": "## What is a Code of Practice under WHS Legislation?\n\nBased on the source documents provided, I can offer only **limited information** on this topic.\n\nThe Queensland *Work Health and Safety Act 2011* ",
       "context_count": 3,
       "scores": {
-        "faithfulness": 0.0,
+        "faithfulness": 0.4167,
         "context_precision": 0.0,
         "context_recall": 0.0,
         "answer_relevancy": 0.0
@@ -142,13 +142,13 @@
         "FD01",
         "FD02"
       ],
-      "answer_excerpt": "## NES Entitlements for Casual Employees\n\nUnder the **National Employment Standards (NES)**, casual employees have access to a specific subset of entitlements. The NES apply to all employees covered b",
+      "answer_excerpt": "## NES Entitlements for Casual Employees\n\nUnder the National Employment Standards (NES), casual employees have access to a specific subset of entitlements. Not all NES provisions apply to casuals — ru",
       "context_count": 3,
       "scores": {
-        "faithfulness": 1.0,
+        "faithfulness": 0.9545,
         "context_precision": 0.8333,
         "context_recall": 1.0,
-        "answer_relevancy": 0.8525
+        "answer_relevancy": 0.8465
       }
     },
     {
@@ -164,13 +164,13 @@
         "SS03a",
         "SS03b"
       ],
-      "answer_excerpt": "## Worker's Duty to Take Reasonable Care Under the WHS Act\n\nUnder the **Work Health and Safety Act 2011 (Qld), section 28**, workers have the following duties while at work [SS03a]:\n\n### The Four Key ",
+      "answer_excerpt": "## Worker's Duty to Take Reasonable Care Under the WHS Act\n\nUnder the Queensland *Work Health and Safety Act 2011*, **section 28** sets out the duties of workers while at work. Specifically, a worker ",
       "context_count": 3,
       "scores": {
-        "faithfulness": 1.0,
+        "faithfulness": 0.8571,
         "context_precision": 1.0,
         "context_recall": 1.0,
-        "answer_relevancy": 0.6873
+        "answer_relevancy": 0.6329
       }
     },
     {
@@ -186,20 +186,20 @@
       "expected_doc_ids": [
         "HN02"
       ],
-      "answer_excerpt": "## How Fatigue Affects Workplace Safety\n\n### What is Fatigue?\n\nFatigue is more than simply feeling tired or sleepy — it is a state of impairment that can be physical, mental, emotional, or a combinati",
+      "answer_excerpt": "## How Fatigue Affects Workplace Safety\n\n### What is Fatigue?\n\nFatigue is more than feeling sleepy, tired or drowsy — it is a **state of impairment** that can be physical, mental, emotional, or a comb",
       "context_count": 6,
       "scores": {
-        "faithfulness": 0.9487,
+        "faithfulness": 0.9444,
         "context_precision": 1.0,
         "context_recall": 1.0,
-        "answer_relevancy": 0.9199
+        "answer_relevancy": 0.9452
       }
     }
   ],
   "aggregates": {
-    "faithfulness": 0.7715,
-    "context_precision": 0.7845,
+    "faithfulness": 0.7331,
+    "context_precision": 0.7522,
     "context_recall": 0.75,
-    "answer_relevancy": 0.5288
+    "answer_relevancy": 0.5201
   }
 }

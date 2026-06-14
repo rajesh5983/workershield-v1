@@ -6,4 +6,4 @@ Results across retrieval configurations. Each row is one eval run.
 |---|---|---|---|---|---|
 | 2026-06-12 | dense_only | 0.8938 | 0.7500 | 0.7500 | 0.6387 |
 | 2026-06-12 | hybrid | 0.6878 | 0.7783 | 0.8750 | 0.5251 |
-| 2026-06-14 | hybrid_reranked | 0.7715 | 0.7845 | 0.7500 | 0.5288 |
+| 2026-06-14 | hybrid_reranked | 0.7331 | 0.7522 | 0.7500 | 0.5201 |
